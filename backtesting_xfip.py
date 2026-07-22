@@ -30,3 +30,27 @@ def descargar_y_filtrar_dataset(anio_inicio=2022, anio_fin=2023):
     total_juegos = sum(len(v) for v in juegos_filtrados.values())
     print(f"Juegos filtrados ({anio_inicio}-{anio_fin}, temporada regular): {total_juegos}")
     return juegos_filtrados
+def obtener_abridor_real(team_abbrev, fecha):
+    team_id = TEAM_IDS.get(team_abbrev)
+    if not team_id:
+        return None
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId={team_id}&date={fecha}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        juego = data["dates"][0]["games"][0]
+        game_pk = juego["gamePk"]
+    except (KeyError, IndexError):
+        return None
+
+    try:
+        r2 = requests.get(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore", timeout=10)
+        box = r2.json()
+        for lado in ["home", "away"]:
+            equipo_box = box["teams"][lado]
+            if equipo_box["team"]["abbreviation"] == team_abbrev:
+                pitchers = equipo_box.get("pitchers", [])
+                return pitchers[0] if pitchers else None
+    except (KeyError, IndexError):
+        return None
+    return None
