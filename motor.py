@@ -470,3 +470,18 @@ def factor_matchup_lr(ops_vl, ops_vr, lista_batside):
         return 1.0
     ops_esperado = (ops_vl * n_l + ops_vr * n_r) / total
     return ops_esperado / LIGA_OPS_CONTRA
+def imprimir_matchup_lr(p, fecha_hoy):
+    lineup_local = obtener_lineup_confirmado(p['local'], fecha_hoy)
+    lineup_visitante = obtener_lineup_confirmado(p['visitante'], fecha_hoy)
+    if lineup_local:
+        ids_local = [j['id'] for j in lineup_local]
+        lados_local = list(obtener_batside_lote(ids_local).values())
+        ops_vl_v, ops_vr_v = obtener_splits_pitcher(p['pitcher_visitante_id'], 2026)
+        factor_v = factor_matchup_lr(ops_vl_v, ops_vr_v, lados_local)
+        print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {factor_v:.3f}")
+    if lineup_visitante:
+        ids_visitante = [j['id'] for j in lineup_visitante]
+        lados_visitante = list(obtener_batside_lote(ids_visitante).values())
+        ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
+        factor_l = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
+        print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l:.3f}")
