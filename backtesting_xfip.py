@@ -79,6 +79,38 @@ def runs_esperados_simplificado(era_rival, ip_rival, k_rival, bb_rival):
     f_ofensiva = (EV_LIGA/88.5 * 0.6) + (BARREL_LIGA/0.075 * 0.4)
     return 4.35 * f_ofensiva * f_abridor * PARK_FACTOR_NEUTRAL
 
+def calcular_era_hasta(gamelog, fecha_corte):
+    ip_t, k_t, bb_t, er_t = 0.0, 0, 0, 0
+    for ap in gamelog:
+        if ap["date"] >= fecha_corte:
+            continue
+        s = ap["stat"]
+        ip_t += parse_ip(s.get("inningsPitched", "0.0"))
+        k_t += s.get("strikeOuts", 0)
+        bb_t += s.get("baseOnBalls", 0)
+        er_t += s.get("earnedRuns", 0)
+    if ip_t <= 0:
+        return None
+    era = er_t * 9 / ip_t
+    return (era, ip_t, k_t, bb_t)
+
+def calcular_xfip_hasta(gamelog, fecha_corte):
+    ip_t, k_t, bb_t, hr_t, hbp_t, fb_t = 0.0, 0, 0, 0, 0, 0
+    for ap in gamelog:
+        if ap["date"] >= fecha_corte:
+            continue
+        s = ap["stat"]
+        ip_t += parse_ip(s.get("inningsPitched", "0.0"))
+        k_t += s.get("strikeOuts", 0)
+        bb_t += s.get("baseOnBalls", 0)
+        hr_t += s.get("homeRuns", 0)
+        hbp_t += s.get("hitByPitch", 0)
+        fb_t += s.get("flyOuts", 0)
+    if ip_t <= 0:
+        return None
+    xfip = calcular_xfip(k_t, bb_t, hbp_t, fb_t, ip_t)
+    return (xfip, ip_t, k_t, bb_t)
+
 def correr_backtesting():
     juegos = descargar_y_filtrar_dataset(2022, 2023)
     cache_gamelogs = {}
