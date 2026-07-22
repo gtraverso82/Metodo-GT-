@@ -156,7 +156,8 @@ def correr_backtesting():
             prob_local_era = calibrar_platt(runs_l_era / (runs_l_era + runs_v_era))
 
             runs_l_xfip = runs_esperados_simplificado(xfip_l[0], xfip_l[1], xfip_l[2], xfip_l[3])
-            runs_v_xfip = runs_esperados_simplificado(xfip_l[0], xfip_v[1], xfip_v[2], xfip_v[3])
+                runs_v_xfip = runs_esperados_simplificado(xfip_v[0], xfip_v[1], xfip_v[2], xfip_v[3])
+
             prob_local_xfip = calibrar_platt(runs_l_xfip / (runs_l_xfip + runs_v_xfip))
 
             gano_local = score_local > score_visitante
