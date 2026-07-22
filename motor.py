@@ -415,3 +415,52 @@ def obtener_lineup_confirmado(equipo_abbrev, fecha):
         return None
     except (KeyError, IndexError):
         return None
+def obtener_splits_pitcher(pitcher_id, year):
+    url = f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats?stats=statSplits&group=pitching&season={year}&sitCodes=vl,vr"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        splits = data["stats"][0]["splits"]
+    except (KeyError, IndexError):
+        return None, None
+    era_vl, era_vr = None, None
+    for s in splits:
+        stat = s.get("stat", {})
+        ip = parse_ip(stat.get("inningsPitched", "0.0"))
+        er = stat.get("earnedRuns")
+        if er is None or ip <= 0:
+            continue
+        era_calc = er * 9 / ip
+        codigo = s.get("split", {}).get("code")
+        if codigo == "vl":
+            era_vl = era_calc
+        elif codigo == "vr":
+            era_vr = era_calc
+    return era_vl, era_vr
+
+def obtener_batside_lote(lista_ids):
+    if not lista_ids:
+        return {}
+    ids_str = ",".join(str(i) for i in lista_ids if i)
+    url = f"https://statsapi.mlb.com/api/v1/people?personIds={ids_str}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+    except Exception:
+        return {}
+    resultado = {}
+    for persona in data.get("people", []):
+        lado = persona.get("batSide", {}).get("code")
+        resultado[persona["id"]] = lado
+    return resultado
+
+def factor_matchup_lr(era_vl, era_vr, lista_batside):
+    if era_vl is None or era_vr is None or not lista_batside:
+        return 1.0
+    n_l = sum(1 for b in lista_batside if b == "L")
+    n_r = sum(1 for b in lista_batside if b == "R")
+    total = n_l + n_r
+    if total == 0:
+        return 1.0
+    era_esperado = (era_vl * n_l + era_vr * n_r) / total
+    return shrink_era(era_esperado, total, PRIOR_IP_ABRIDOR) / LIGA_ERA_PROMEDIO
