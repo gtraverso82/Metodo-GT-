@@ -485,3 +485,43 @@ def imprimir_matchup_lr(p, fecha_hoy):
         ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
         factor_l = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
         print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l:.3f}")
+def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
+    fecha_espn = fecha.replace("-", "")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
+    r = requests.get(url)
+    data = r.json()
+    for evento in data.get("events", []):
+        competencia = evento["competitions"][0]
+        equipos = competencia["competitors"]
+        home = next(e for e in equipos if e["homeAway"] == "home")
+        away = next(e for e in equipos if e["homeAway"] == "away")
+        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+            pred = competencia.get("predictor")
+            if pred:
+                return {"prob_local": pred.get("homeTeam", {}).get("gameProjection"),
+                        "prob_visitante": pred.get("awayTeam", {}).get("gameProjection")}
+            return None
+    return None
+
+def obtener_lesiones_espn(equipo_abbrev):
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{equipo_abbrev.lower()}/injuries"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        lesiones = []
+        for item in data.get("injuries", []):
+            for atleta in item.get("injuries", []):
+                nombre = atleta.get("athlete", {}).get("displayName", "?")
+                estado = atleta.get("status", "?")
+                lesiones.append(f"{nombre} ({estado})")
+        return lesiones
+    except Exception:
+        return []
+
+def contexto_cualitativo(equipo_local, equipo_visitante, fecha):
+    resultado = {}
+    resultado["clima"] = obtener_clima(equipo_local, fecha)
+    resultado["espn_predictor"] = obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha)
+    resultado["lesiones_local"] = obtener_lesiones_espn(equipo_local)
+    resultado["lesiones_visitante"] = obtener_lesiones_espn(equipo_visitante)
+    return resultado
