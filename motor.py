@@ -397,3 +397,21 @@ def obtener_cartelera_dia(fecha):
                 "pitcher_visitante_id": away_pitcher.get("id"), "pitcher_visitante_nombre": away_pitcher.get("fullName", "No anunciado"),
             })
     return partidos_hoy
+def obtener_lineup_confirmado(equipo_abbrev, fecha):
+    team_id = TEAM_IDS.get(equipo_abbrev)
+    if not team_id:
+        return None
+    url = (f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId={team_id}"
+           f"&date={fecha}&hydrate=lineups,team")
+    r = requests.get(url)
+    data = r.json()
+    try:
+        juego = data["dates"][0]["games"][0]
+        home_abbr = juego["teams"]["home"]["team"]["abbreviation"]
+        lineups = juego.get("lineups", {})
+        jugadores = lineups.get("homePlayers", []) if home_abbr == equipo_abbrev else lineups.get("awayPlayers", [])
+        if jugadores:
+            return [{"id": j.get("id"), "nombre": j.get("fullName", "?")} for j in jugadores]
+        return None
+    except (KeyError, IndexError):
+        return None
