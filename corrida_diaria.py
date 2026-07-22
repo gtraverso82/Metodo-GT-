@@ -4,8 +4,10 @@ from supabase import create_client
 from motor import (
     obtener_cartelera_dia, obtener_cuotas_espn, obtener_handicap_espn, obtener_total_espn,
     analizar_partido_hoy, analizar_total, analizar_f5_completo,
-    PARK_FACTORS
+    PARK_FACTORS, obtener_lineup_confirmado, obtener_batside_lote,
+    obtener_splits_pitcher, factor_matchup_lr
 )
+
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
