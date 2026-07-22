@@ -309,3 +309,91 @@ def obtener_clima(team_abbrev, fecha):
                 "direccion_viento": hourly["winddirection_10m"][idx]}
     except (KeyError, IndexError):
         return None
+def analizar_partido_hoy(equipo_local, equipo_visitante, pitcher_id_local, pitcher_id_visitante,
+                          park_factor, cuota_ml_local, cuota_ml_visitante,
+                          fecha_hoy=None, year=2026, inicio_temporada="2026-03-15"):
+    if fecha_hoy is None:
+        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    ip_l, k_l, bb_l, era_l = stats_abridor_hasta_hoy(pitcher_id_local, fecha_hoy, year)
+    ip_v, k_v, bb_v, era_v = stats_abridor_hasta_hoy(pitcher_id_visitante, fecha_hoy, year)
+    ev_l, barrel_l = stats_ofensiva_hasta_hoy(equipo_local, inicio_temporada, fecha_hoy, year)
+    ev_v, barrel_v = stats_ofensiva_hasta_hoy(equipo_visitante, inicio_temporada, fecha_hoy, year)
+    bp_l = bullpen_reciente(equipo_local, fecha_hoy, year)
+    bp_v = bullpen_reciente(equipo_visitante, fecha_hoy, year)
+    runs_l = runs_esperados_completo(era_v, ip_v, k_v, bb_v, bp_v, ev_l, barrel_l, park_factor)
+    runs_v = runs_esperados_completo(era_l, ip_l, k_l, bb_l, bp_l, ev_v, barrel_v, park_factor)
+    sim_l = simular_negbinom(runs_l, N_SIMULACIONES)
+    sim_v = simular_negbinom(runs_v, N_SIMULACIONES)
+    victorias_l = np.sum(sim_l > sim_v) + np.sum(sim_l == sim_v)//2
+    prob_l_cruda = victorias_l / N_SIMULACIONES
+    prob_l = calibrar_platt(prob_l_cruda)
+    p_impl_l, p_impl_v = remover_vig(cuota_a_prob(cuota_ml_local), cuota_a_prob(cuota_ml_visitante))
+    diff = prob_l - p_impl_l
+    bandera = "extrema" if abs(diff) > 0.15 else ("moderada" if abs(diff) > 0.06 else "alineado")
+    confianza = calcular_confianza(ip_l, ip_v, len(bp_l), len(bp_v), bandera)
+    recomendacion = recomendacion_final(bandera, confianza)
+    return {"prob_local": prob_l, "bandera": bandera, "confianza": confianza,
+            "recomendacion": recomendacion, "runs_local": runs_l, "runs_visitante": runs_v}
+
+def analizar_total(runs_local, runs_visitante, cuota_over=None, cuota_under=None, linea=None, n_sim=N_SIMULACIONES):
+    sim_l = simular_negbinom(runs_local, n_sim)
+    sim_v = simular_negbinom(runs_visitante, n_sim)
+    total_sim = sim_l + sim_v
+    if linea is None:
+        linea = round((np.mean(total_sim)) * 2) / 2
+    prob_over = np.mean(total_sim > linea)
+    prob_under = np.mean(total_sim < linea)
+    resultado = {"prob_over": prob_over, "prob_under": prob_under, "total_esperado": np.mean(total_sim), "linea": linea}
+    if cuota_over is not None:
+        p_impl_over, p_impl_under = remover_vig(cuota_a_prob(cuota_over), cuota_a_prob(cuota_under))
+        resultado["diferencia"] = prob_over - p_impl_over
+    return resultado
+
+LIGA_RUNS_5IP = LIGA_RUNS_PROMEDIO * (5/9)
+
+def runs_esperados_f5(era_rival, ip_rival, k_rival, bb_rival, ev_propio, barrel_propio, park_factor):
+    era_adj = shrink_era(era_rival, ip_rival, PRIOR_IP_ABRIDOR)
+    f_era = era_adj / LIGA_ERA_PROMEDIO
+    f_kbb = factor_kbb(k_rival, bb_rival, ip_rival)
+    f_abridor = (f_era * 0.70) + (f_kbb * 0.30)
+    f_ofensiva = (ev_propio/88.5 * 0.6) + (barrel_propio/0.075 * 0.4)
+    return LIGA_RUNS_5IP * f_ofensiva * f_abridor * park_factor
+
+def analizar_f5_completo(equipo_local, equipo_visitante, pitcher_id_local, pitcher_id_visitante,
+                          park_factor, fecha_hoy, cuota_f5_local=None, cuota_f5_visitante=None,
+                          year=2026, inicio_temporada="2026-03-15"):
+    ip_l, k_l, bb_l, era_l = stats_abridor_hasta_hoy(pitcher_id_local, fecha_hoy, year)
+    ip_v, k_v, bb_v, era_v = stats_abridor_hasta_hoy(pitcher_id_visitante, fecha_hoy, year)
+    ev_l, barrel_l = stats_ofensiva_hasta_hoy(equipo_local, inicio_temporada, fecha_hoy, year)
+    ev_v, barrel_v = stats_ofensiva_hasta_hoy(equipo_visitante, inicio_temporada, fecha_hoy, year)
+    runs_l = runs_esperados_f5(era_v, ip_v, k_v, bb_v, ev_l, barrel_l, park_factor)
+    runs_v = runs_esperados_f5(era_l, ip_l, k_l, bb_l, ev_v, barrel_v, park_factor)
+    sim_l = simular_negbinom(runs_l, N_SIMULACIONES)
+    sim_v = simular_negbinom(runs_v, N_SIMULACIONES)
+    prob_local = np.mean(sim_l > sim_v)
+    prob_visitante = np.mean(sim_v > sim_l)
+    prob_empate = np.mean(sim_l == sim_v)
+    resultado = {"prob_local_f5": prob_local, "prob_visitante_f5": prob_visitante, "prob_empate_f5": prob_empate}
+    if cuota_f5_local is not None:
+        p_impl_l, p_impl_v = remover_vig(cuota_a_prob(cuota_f5_local), cuota_a_prob(cuota_f5_visitante))
+        resultado["diferencia_f5"] = prob_local - p_impl_l
+    return resultado
+
+def obtener_cartelera_dia(fecha):
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={fecha}&hydrate=probablePitcher,team,venue&gameType=R"
+    r = requests.get(url)
+    data = r.json()
+    partidos_hoy = []
+    for fecha_obj in data.get("dates", []):
+        for juego in fecha_obj.get("games", []):
+            home = juego["teams"]["home"]
+            away = juego["teams"]["away"]
+            home_pitcher = home.get("probablePitcher", {})
+            away_pitcher = away.get("probablePitcher", {})
+            partidos_hoy.append({
+                "local": home["team"]["abbreviation"], "visitante": away["team"]["abbreviation"],
+                "venue": juego.get("venue", {}).get("name", "?"),
+                "pitcher_local_id": home_pitcher.get("id"), "pitcher_local_nombre": home_pitcher.get("fullName", "No anunciado"),
+                "pitcher_visitante_id": away_pitcher.get("id"), "pitcher_visitante_nombre": away_pitcher.get("fullName", "No anunciado"),
+            })
+    return partidos_hoy
