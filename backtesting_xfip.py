@@ -54,3 +54,55 @@ def obtener_abridor_real(team_abbrev, fecha):
     except (KeyError, IndexError):
         return None
     return None
+EV_LIGA = 88.5
+BARREL_LIGA = 0.075
+PARK_FACTOR_NEUTRAL = 1.00
+
+def runs_esperados_simplificado(era_rival, ip_rival, k_rival, bb_rival):
+    era_adj = shrink_era(era_rival, ip_rival, PRIOR_IP_ABRIDOR)
+    f_era = era_adj / LIGA_ERA_PROMEDIO
+    f_kbb = factor_kbb(k_rival, bb_rival, ip_rival)
+    f_abridor = (f_era * 0.70) + (f_kbb * 0.30)
+    f_ofensiva = (EV_LIGA/88.5 * 0.6) + (BARREL_LIGA/0.075 * 0.4)
+    return 4.35 * f_ofensiva * f_abridor * PARK_FACTOR_NEUTRAL
+
+def correr_backtesting():
+    juegos = descargar_y_filtrar_dataset(2022, 2023)
+    cache_gamelogs = {}
+    resultados = []
+    contador = 0
+
+    for fecha, lista_juegos in juegos.items():
+        for juego in lista_juegos:
+            gv = juego.get("gameView", {})
+            local = gv.get("homeTeam", {}).get("shortName")
+            visitante = gv.get("awayTeam", {}).get("shortName")
+            score_local = gv.get("homeTeamScore")
+            score_visitante = gv.get("awayTeamScore")
+
+            if local not in TEAM_IDS or visitante not in TEAM_IDS:
+                continue
+            if score_local is None or score_visitante is None:
+                continue
+
+            pid_local = obtener_abridor_real(local, fecha)
+            pid_visitante = obtener_abridor_real(visitante, fecha)
+            if not pid_local or not pid_visitante:
+                continue
+
+            year = int(fecha[:4])
+
+            if pid_local not in cache_gamelogs:
+                cache_gamelogs[pid_local] = gamelog_pitcher(pid_local, year)
+            if pid_visitante not in cache_gamelogs:
+                cache_gamelogs[pid_visitante] = gamelog_pitcher(pid_visitante, year)
+
+            contador += 1
+            if contador % 50 == 0:
+                print(f"Procesados: {contador} juegos...")
+
+    print(f"Total procesado (fase 1 - descarga gamelogs): {contador} juegos")
+    return cache_gamelogs, juegos
+
+if __name__ == "__main__":
+    correr_backtesting()
