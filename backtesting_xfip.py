@@ -82,8 +82,9 @@ def runs_esperados_simplificado(era_rival, ip_rival, k_rival, bb_rival):
 def correr_backtesting():
     juegos = descargar_y_filtrar_dataset(2022, 2023)
     cache_gamelogs = {}
-    resultados = []
+    lote = []
     contador = 0
+    guardados = 0
 
     for fecha, lista_juegos in juegos.items():
         for juego in lista_juegos:
@@ -110,12 +111,52 @@ def correr_backtesting():
             if pid_visitante not in cache_gamelogs:
                 cache_gamelogs[pid_visitante] = gamelog_pitcher(pid_visitante, year)
 
-            contador += 1
-            if contador % 50 == 0:
-                print(f"Procesados: {contador} juegos...")
+            era_l = calcular_era_hasta(cache_gamelogs[pid_local], fecha)
+            era_v = calcular_era_hasta(cache_gamelogs[pid_visitante], fecha)
+            xfip_l = calcular_xfip_hasta(cache_gamelogs[pid_local], fecha)
+            xfip_v = calcular_xfip_hasta(cache_gamelogs[pid_visitante], fecha)
 
-    print(f"Total procesado (fase 1 - descarga gamelogs): {contador} juegos")
-    return cache_gamelogs, juegos
+            if era_l is None or era_v is None:
+                continue
+
+            runs_l_era = runs_esperados_simplificado(era_v[0], era_v[1], era_v[2], era_v[3])
+            runs_v_era = runs_esperados_simplificado(era_l[0], era_l[1], era_l[2], era_l[3])
+            prob_local_era = calibrar_platt(runs_l_era / (runs_l_era + runs_v_era))
+
+            runs_l_xfip = runs_esperados_simplificado(xfip_l[0], xfip_l[1], xfip_l[2], xfip_l[3])
+            runs_v_xfip = runs_esperados_simplificado(xfip_l[0], xfip_v[1], xfip_v[2], xfip_v[3])
+            prob_local_xfip = calibrar_platt(runs_l_xfip / (runs_l_xfip + runs_v_xfip))
+
+            gano_local = score_local > score_visitante
+
+            lote.append({
+                "game_id": f"{visitante}@{local}_{fecha}",
+                "fecha": fecha,
+                "pitcher_id_local": pid_local,
+                "pitcher_id_visitante": pid_visitante,
+                "era_shrink_local": round(era_l[3], 3),
+                "era_shrink_visitante": round(era_v[3], 3),
+                "xfip_local": round(xfip_l[3], 3),
+                "xfip_visitante": round(xfip_v[3], 3),
+                "prob_local_era": round(float(prob_local_era), 4),
+                "prob_local_xfip": round(float(prob_local_xfip), 4),
+                "gano_local": bool(gano_local),
+                "runs_reales_local": int(score_local),
+                "runs_reales_visitante": int(score_visitante),
+            })
+
+            contador += 1
+            if len(lote) >= 100:
+                supabase.table("backtesting_resultados").insert(lote).execute()
+                guardados += len(lote)
+                print(f"Guardados: {guardados} / procesados: {contador}")
+                lote = []
+
+    if lote:
+        supabase.table("backtesting_resultados").insert(lote).execute()
+        guardados += len(lote)
+
+    print(f"=== Backtesting completo: {guardados} juegos guardados en Supabase ===")
 
 if __name__ == "__main__":
     correr_backtesting()
