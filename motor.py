@@ -423,20 +423,24 @@ def obtener_splits_pitcher(pitcher_id, year):
         splits = data["stats"][0]["splits"]
     except (KeyError, IndexError):
         return None, None
-    era_vl, era_vr = None, None
+    ops_vl, ops_vr = None, None
     for s in splits:
         stat = s.get("stat", {})
-        ip = parse_ip(stat.get("inningsPitched", "0.0"))
-        er = stat.get("earnedRuns")
-        if er is None or ip <= 0:
+        ops_str = stat.get("ops")
+        bf = stat.get("battersFaced", 0)
+        if ops_str is None or bf < 20:
             continue
-        era_calc = er * 9 / ip
+        try:
+            ops_val = float(ops_str)
+        except (TypeError, ValueError):
+            continue
         codigo = s.get("split", {}).get("code")
         if codigo == "vl":
-            era_vl = era_calc
+            ops_vl = ops_val
         elif codigo == "vr":
-            era_vr = era_calc
-    return era_vl, era_vr
+            ops_vr = ops_val
+    return ops_vl, ops_vr
+
 
 def obtener_batside_lote(lista_ids):
     if not lista_ids:
