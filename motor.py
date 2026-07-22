@@ -458,13 +458,15 @@ def obtener_batside_lote(lista_ids):
         resultado[persona["id"]] = lado
     return resultado
 
-def factor_matchup_lr(era_vl, era_vr, lista_batside):
-    if era_vl is None or era_vr is None or not lista_batside:
+LIGA_OPS_CONTRA = 0.700
+
+def factor_matchup_lr(ops_vl, ops_vr, lista_batside):
+    if ops_vl is None or ops_vr is None or not lista_batside:
         return 1.0
     n_l = sum(1 for b in lista_batside if b == "L")
     n_r = sum(1 for b in lista_batside if b == "R")
     total = n_l + n_r
     if total == 0:
         return 1.0
-    era_esperado = (era_vl * n_l + era_vr * n_r) / total
-    return shrink_era(era_esperado, total, PRIOR_IP_ABRIDOR) / LIGA_ERA_PROMEDIO
+    ops_esperado = (ops_vl * n_l + ops_vr * n_r) / total
+    return ops_esperado / LIGA_OPS_CONTRA
