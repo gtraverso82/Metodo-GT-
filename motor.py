@@ -165,3 +165,54 @@ def bullpen_reciente(team_abbrev, fecha_hoy, year, dias_atras=5):
 
 def winsorizar_bullpen(eras, tope=TOPE_ERA_RELEVISTA):
     return [min(e, tope) for e in eras]
+def runs_esperados_completo(era_rival, ip_rival, k_rival, bb_rival, bullpen_eras_rival,
+                             ev_propio, barrel_propio, park_factor):
+    era_adj = shrink_era(era_rival, ip_rival, PRIOR_IP_ABRIDOR)
+    f_era = era_adj / LIGA_ERA_PROMEDIO
+    f_kbb = factor_kbb(k_rival, bb_rival, ip_rival)
+    f_abridor = (f_era * 0.70) + (f_kbb * 0.30)
+    if bullpen_eras_rival:
+        eras_topadas = winsorizar_bullpen(bullpen_eras_rival)
+        era_bp = shrink_era(np.mean(eras_topadas), PRIOR_IP_BULLPEN, PRIOR_IP_BULLPEN)
+        f_bullpen = era_bp / LIGA_ERA_PROMEDIO
+    else:
+        f_bullpen = 1.0
+    f_pitcheo = (f_abridor * 0.58) + (f_bullpen * 0.42)
+    f_ofensiva = (ev_propio/88.5 * 0.6) + (barrel_propio/0.075 * 0.4)
+    return LIGA_RUNS_PROMEDIO * f_ofensiva * f_pitcheo * park_factor
+
+def simular_negbinom(media, n_sim, dispersion=DISPERSION_RUNS):
+    media = max(media, 0.1)
+    var = media * dispersion
+    p = media / var
+    r = media * p / (1 - p)
+    return np.random.negative_binomial(r, p, n_sim)
+
+def logit(p, eps=1e-6):
+    p = np.clip(p, eps, 1-eps)
+    return np.log(p/(1-p))
+
+def calibrar_platt(prob_cruda):
+    z = logit(prob_cruda)
+    return 1 / (1 + np.exp(-(PLATT_A * z + PLATT_B)))
+
+def cuota_a_prob(cuota):
+    return -cuota/(-cuota+100) if cuota < 0 else 100/(cuota+100)
+
+def remover_vig(pa, pb):
+    t = pa + pb
+    return pa/t, pb/t
+
+def calcular_confianza(ip_l, ip_v, n_bp_l, n_bp_v, bandera):
+    conf_ip = (min(ip_l/PRIOR_IP_ABRIDOR,1) + min(ip_v/PRIOR_IP_ABRIDOR,1)) / 2
+    conf_bp = min((n_bp_l+n_bp_v)/8, 1.0)
+    conf = (conf_ip*0.6) + (conf_bp*0.4)
+    if bandera == "extrema": conf *= 0.5
+    elif bandera == "moderada": conf *= 0.9
+    return round(conf*100, 1)
+
+def recomendacion_final(bandera, confianza):
+    if bandera == "extrema": return "NO JUGAR — divergencia sospechosa"
+    if bandera == "alineado": return "NO JUGAR — sin edge, Confirmación"
+    if confianza < 45: return "CAUTELA — edge moderado, baja confianza"
+    return "CRUZAR CON ANÁLISIS CUALITATIVO"
