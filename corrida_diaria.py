@@ -7,8 +7,6 @@ from motor import (
     PARK_FACTORS, imprimir_matchup_lr
 )
 
-
-
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -33,6 +31,7 @@ def guardar_diagnostico_total(game_id, fecha, total_esperado, linea_mercado,
         "park_factor": park_factor, "era_local": era_local, "era_visitante": era_visitante
     }).execute()
     print(f"Diagnostico: {game_id} (dif: {diferencia:+.2f})")
+
 def correr_jornada():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     print(f"=== Corrida diaria: {fecha_hoy} ===")
@@ -59,28 +58,11 @@ def correr_jornada():
                 fecha_hoy=fecha_hoy
             )
             game_id = f"{p['visitante']}@{p['local']}_{fecha_hoy.replace('-','')}"
-                    try:
-            lineup_local = obtener_lineup_confirmado(p['local'], fecha_hoy)
-            lineup_visitante = obtener_lineup_confirmado(p['visitante'], fecha_hoy)
 
-            if lineup_local:
-                ids_local = [j['id'] for j in lineup_local]
-                batside_local = obtener_batside_lote(ids_local)
-                lados_local = list(batside_local.values())
-                ops_vl_v, ops_vr_v = obtener_splits_pitcher(p['pitcher_visitante_id'], 2026)
-                factor_v_vs_local = factor_matchup_lr(ops_vl_v, ops_vr_v, lados_local)
-                print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {factor_v_vs_local:.3f}")
-
-            if lineup_visitante:
-                ids_visitante = [j['id'] for j in lineup_visitante]
-                batside_visitante = obtener_batside_lote(ids_visitante)
-                lados_visitante = list(batside_visitante.values())
-                ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
-                factor_l_vs_visitante = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
-                print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l_vs_visitante:.3f}")
-        except Exception as e:
-            print(f"  (matchup L/R no disponible: {e})")
-
+            try:
+                imprimir_matchup_lr(p, fecha_hoy)
+            except Exception as e:
+                print(f"  (matchup L/R no disponible: {e})")
 
             guardar_snapshot(game_id, "espn", "moneyline", p['local'], cuota_local,
                               modelo_prob=resultado['prob_local'], modelo_bandera=resultado['bandera'])
@@ -104,4 +86,3 @@ def correr_jornada():
 
 if __name__ == "__main__":
     correr_jornada()
-         
