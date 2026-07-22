@@ -216,3 +216,96 @@ def recomendacion_final(bandera, confianza):
     if bandera == "alineado": return "NO JUGAR — sin edge, Confirmación"
     if confianza < 45: return "CAUTELA — edge moderado, baja confianza"
     return "CRUZAR CON ANÁLISIS CUALITATIVO"
+def obtener_cuotas_espn(equipo_local, equipo_visitante, fecha):
+    fecha_espn = fecha.replace("-", "")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
+    r = requests.get(url)
+    data = r.json()
+    for evento in data.get("events", []):
+        competencia = evento["competitions"][0]
+        equipos = competencia["competitors"]
+        home = next(e for e in equipos if e["homeAway"] == "home")
+        away = next(e for e in equipos if e["homeAway"] == "away")
+        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+            odds_list = competencia.get("odds", [])
+            if not odds_list:
+                return None, None
+            moneyline = odds_list[0].get("moneyline", {})
+            cuota_local = moneyline.get("home", {}).get("close", {}).get("odds")
+            cuota_visitante = moneyline.get("away", {}).get("close", {}).get("odds")
+            try:
+                return int(cuota_local), int(cuota_visitante)
+            except (TypeError, ValueError):
+                return None, None
+    return None, None
+
+def obtener_handicap_espn(equipo_local, equipo_visitante, fecha):
+    fecha_espn = fecha.replace("-", "")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
+    r = requests.get(url)
+    data = r.json()
+    for evento in data.get("events", []):
+        competencia = evento["competitions"][0]
+        equipos = competencia["competitors"]
+        home = next(e for e in equipos if e["homeAway"] == "home")
+        away = next(e for e in equipos if e["homeAway"] == "away")
+        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+            odds_list = competencia.get("odds", [])
+            if not odds_list:
+                return None
+            spread_info = odds_list[0].get("pointSpread", {})
+            home_odds = spread_info.get("home", {}).get("close", {}).get("odds")
+            away_odds = spread_info.get("away", {}).get("close", {}).get("odds")
+            home_line = spread_info.get("home", {}).get("close", {}).get("line")
+            try:
+                return {"home_line": float(home_line) if home_line else None,
+                        "home_odds": int(home_odds) if home_odds else None,
+                        "away_odds": int(away_odds) if away_odds else None}
+            except (TypeError, ValueError):
+                return None
+    return None
+
+def obtener_total_espn(equipo_local, equipo_visitante, fecha):
+    fecha_espn = fecha.replace("-", "")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
+    r = requests.get(url)
+    data = r.json()
+    for evento in data.get("events", []):
+        competencia = evento["competitions"][0]
+        equipos = competencia["competitors"]
+        home = next(e for e in equipos if e["homeAway"] == "home")
+        away = next(e for e in equipos if e["homeAway"] == "away")
+        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+            odds_list = competencia.get("odds", [])
+            if not odds_list:
+                return None
+            total_info = odds_list[0].get("total", {})
+            over_odds = total_info.get("over", {}).get("close", {}).get("odds")
+            under_odds = total_info.get("under", {}).get("close", {}).get("odds")
+            over_line = total_info.get("over", {}).get("close", {}).get("line", "")
+            try:
+                linea = float(over_line.replace("o", ""))
+                return {"linea": linea, "over_odds": int(over_odds), "under_odds": int(under_odds)}
+            except (TypeError, ValueError, AttributeError):
+                return None
+    return None
+
+def obtener_clima(team_abbrev, fecha):
+    coords = COORDENADAS_ESTADIO.get(team_abbrev)
+    if not coords:
+        return None
+    lat, lon = coords
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+           f"&hourly=temperature_2m,windspeed_10m,winddirection_10m"
+           f"&temperature_unit=fahrenheit&windspeed_unit=mph"
+           f"&start_date={fecha}&end_date={fecha}")
+    r = requests.get(url)
+    data = r.json()
+    try:
+        hourly = data["hourly"]
+        idx = 23
+        return {"temperatura_f": hourly["temperature_2m"][idx],
+                "viento_mph": hourly["windspeed_10m"][idx],
+                "direccion_viento": hourly["winddirection_10m"][idx]}
+    except (KeyError, IndexError):
+        return None
