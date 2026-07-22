@@ -66,3 +66,102 @@ def sigma_era_muestral(era, ip):
     if ip <= 0:
         return 2.0
     return np.sqrt(9 * max(era, 0.1) / ip)
+def gamelog_pitcher(pitcher_id, year):
+    url = f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats?stats=gameLog&group=pitching&season={year}"
+    r = requests.get(url)
+    try:
+        return r.json()["stats"][0]["splits"]
+    except (KeyError, IndexError):
+        return []
+
+def parse_ip(ip_str):
+    partes = ip_str.split(".")
+    return float(partes[0]) + (int(partes[1])/3 if len(partes) > 1 else 0)
+
+def stats_abridor_hasta_hoy(pitcher_id, fecha_hoy, year):
+    gamelog = gamelog_pitcher(pitcher_id, year)
+    ip_t, k_t, bb_t, er_t = 0.0, 0, 0, 0
+    for ap in gamelog:
+        if ap["date"] >= fecha_hoy:
+            continue
+        s = ap["stat"]
+        ip = parse_ip(s.get("inningsPitched", "0.0"))
+        ip_t += ip
+        k_t += s.get("strikeOuts", 0)
+        bb_t += s.get("baseOnBalls", 0)
+        er_t += s.get("earnedRuns", 0)
+    era = (er_t * 9 / ip_t) if ip_t > 0 else 0.0
+    return ip_t, k_t, bb_t, era
+
+def stats_abridor_xfip_hasta_hoy(pitcher_id, fecha_hoy, year):
+    gamelog = gamelog_pitcher(pitcher_id, year)
+    ip_t, k_t, bb_t, hr_t, hbp_t, fb_t = 0.0, 0, 0, 0, 0, 0
+    for ap in gamelog:
+        if ap["date"] >= fecha_hoy:
+            continue
+        s = ap["stat"]
+        ip_t += parse_ip(s.get("inningsPitched", "0.0"))
+        k_t += s.get("strikeOuts", 0)
+        bb_t += s.get("baseOnBalls", 0)
+        hr_t += s.get("homeRuns", 0)
+        hbp_t += s.get("hitByPitch", 0)
+        fb_t += s.get("flyOuts", 0)
+    return ip_t, k_t, bb_t, hr_t, hbp_t, fb_t
+
+def stats_ofensiva_hasta_hoy(team, fecha_inicio, fecha_hoy, year):
+    url = (f"https://baseballsavant.mlb.com/statcast_search/csv?"
+           f"all=true&hfGT=R%7C&hfSea={year}%7C&player_type=batter&team={team}"
+           f"&group_by=name&sort_col=pitches&player_event_sort=api_p_release_speed"
+           f"&sort_order=desc&type=details&game_date_gt={fecha_inicio}&game_date_lt={fecha_hoy}")
+    r = requests.get(url)
+    df = pd.read_csv(StringIO(r.text))
+    dfv = df[df["launch_speed"].notna() & df["events"].notna()]
+    if len(dfv) == 0:
+        return 88.5, 0.075
+    ev = dfv["launch_speed"].mean()
+    barrels = (dfv["launch_speed_angle"] == 6).sum()
+    return round(ev, 1), round(barrels/len(dfv), 3)
+
+def bullpen_reciente(team_abbrev, fecha_hoy, year, dias_atras=5):
+    team_id = TEAM_IDS.get(team_abbrev)
+    if not team_id:
+        return []
+    fecha_dt = datetime.strptime(fecha_hoy, "%Y-%m-%d")
+    fecha_inicio_ventana = (fecha_dt - timedelta(days=dias_atras)).strftime("%Y-%m-%d")
+    fecha_fin_ventana = (fecha_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    url = (f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId={team_id}"
+           f"&startDate={fecha_inicio_ventana}&endDate={fecha_fin_ventana}")
+    r = requests.get(url)
+    data = r.json()
+    game_pks = []
+    for fecha_obj in data.get("dates", []):
+        for juego in fecha_obj.get("games", []):
+            if juego.get("status", {}).get("abstractGameState") == "Final":
+                game_pks.append(juego["gamePk"])
+    relevistas_ids = set()
+    for pk in game_pks:
+        r2 = requests.get(f"https://statsapi.mlb.com/api/v1/game/{pk}/boxscore")
+        box = r2.json()
+        for lado in ["home", "away"]:
+            equipo_box = box["teams"][lado]
+            if equipo_box["team"]["abbreviation"] != team_abbrev:
+                continue
+            for pid in equipo_box.get("pitchers", [])[1:]:
+                relevistas_ids.add(pid)
+    eras_bullpen = []
+    for pid in relevistas_ids:
+        gamelog = gamelog_pitcher(pid, year)
+        if not gamelog:
+            continue
+        ultimas_5 = sorted(gamelog, key=lambda x: x["date"])[-5:]
+        ip_t, er_t = 0.0, 0
+        for ap in ultimas_5:
+            s = ap["stat"]
+            ip_t += parse_ip(s.get("inningsPitched", "0.0"))
+            er_t += s.get("earnedRuns", 0)
+        if ip_t > 0:
+            eras_bullpen.append(round(er_t * 9 / ip_t, 2))
+    return eras_bullpen
+
+def winsorizar_bullpen(eras, tope=TOPE_ERA_RELEVISTA):
+    return [min(e, tope) for e in eras]
