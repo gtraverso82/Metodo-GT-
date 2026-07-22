@@ -82,3 +82,24 @@ def correr_jornada():
 
 if __name__ == "__main__":
     correr_jornada()
+            try:
+                lineup_local = obtener_lineup_confirmado(p['local'], fecha_hoy)
+                lineup_visitante = obtener_lineup_confirmado(p['visitante'], fecha_hoy)
+
+                if lineup_local:
+                    ids_local = [j['id'] for j in lineup_local]
+                    batside_local = obtener_batside_lote(ids_local)
+                    lados_local = list(batside_local.values())
+                    ops_vl_v, ops_vr_v = obtener_splits_pitcher(p['pitcher_visitante_id'], 2026)
+                    factor_v_vs_local = factor_matchup_lr(ops_vl_v, ops_vr_v, lados_local)
+                    print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {factor_v_vs_local:.3f}")
+
+                if lineup_visitante:
+                    ids_visitante = [j['id'] for j in lineup_visitante]
+                    batside_visitante = obtener_batside_lote(ids_visitante)
+                    lados_visitante = list(batside_visitante.values())
+                    ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
+                    factor_l_vs_visitante = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
+                    print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l_vs_visitante:.3f}")
+            except Exception as e:
+                print(f"  (matchup L/R no disponible: {e})")
