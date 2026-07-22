@@ -12,9 +12,21 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 DATASET_URL = "https://github.com/ArnavSaraogi/mlb-odds-scraper/releases/download/dataset/mlb_odds.json"
 
+def obtener_url_dataset():
+    api_url = "https://api.github.com/repos/ArnavSaraogi/mlb-odds-scraper/releases/tags/dataset"
+    r = requests.get(api_url, timeout=30)
+    data = r.json()
+    assets = data.get("assets", [])
+    if not assets:
+        raise Exception("No se encontraron assets en el release")
+    print(f"Asset encontrado: {assets[0]['name']}")
+    return assets[0]["browser_download_url"]
+
 def descargar_y_filtrar_dataset(anio_inicio=2022, anio_fin=2023):
-    print("Descargando dataset de cuotas (76 MB, puede tardar)...")
-    r = requests.get(DATASET_URL, timeout=300)
+    url_real = obtener_url_dataset()
+    print(f"Descargando desde: {url_real}")
+    r = requests.get(url_real, timeout=300)
+    print(f"Status code: {r.status_code}, tamano: {len(r.content)} bytes")
     data_completa = r.json()
     print(f"Dataset descargado: {len(data_completa)} fechas totales")
 
@@ -30,6 +42,7 @@ def descargar_y_filtrar_dataset(anio_inicio=2022, anio_fin=2023):
     total_juegos = sum(len(v) for v in juegos_filtrados.values())
     print(f"Juegos filtrados ({anio_inicio}-{anio_fin}, temporada regular): {total_juegos}")
     return juegos_filtrados
+
 def obtener_abridor_real(team_abbrev, fecha):
     team_id = TEAM_IDS.get(team_abbrev)
     if not team_id:
