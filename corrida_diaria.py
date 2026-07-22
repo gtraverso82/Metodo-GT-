@@ -4,7 +4,7 @@ from supabase import create_client
 from motor import (
     obtener_cartelera_dia, obtener_cuotas_espn, obtener_handicap_espn, obtener_total_espn,
     analizar_partido_hoy, analizar_total, analizar_f5_completo,
-    PARK_FACTORS, imprimir_matchup_lr
+    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo
 )
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -63,6 +63,19 @@ def correr_jornada():
                 imprimir_matchup_lr(p, fecha_hoy)
             except Exception as e:
                 print(f"  (matchup L/R no disponible: {e})")
+
+            try:
+                ctx = contexto_cualitativo(p['local'], p['visitante'], fecha_hoy)
+                if ctx['clima']:
+                    print(f"  Clima: {ctx['clima']['temperatura_f']}F, viento {ctx['clima']['viento_mph']}mph")
+                if ctx['espn_predictor']:
+                    print(f"  ESPN Predictor: {p['local']} {ctx['espn_predictor']['prob_local']}% - {p['visitante']} {ctx['espn_predictor']['prob_visitante']}%")
+                if ctx['lesiones_local']:
+                    print(f"  Lesiones {p['local']}: {ctx['lesiones_local']}")
+                if ctx['lesiones_visitante']:
+                    print(f"  Lesiones {p['visitante']}: {ctx['lesiones_visitante']}")
+            except Exception as e:
+                print(f"  (contexto cualitativo no disponible: {e})")
 
             guardar_snapshot(game_id, "espn", "moneyline", p['local'], cuota_local,
                               modelo_prob=resultado['prob_local'], modelo_bandera=resultado['bandera'])
