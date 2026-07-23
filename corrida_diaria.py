@@ -4,7 +4,7 @@ from supabase import create_client
 from motor import (
     obtener_cartelera_dia, obtener_cuotas_espn, obtener_handicap_espn, obtener_total_espn,
     analizar_partido_hoy, analizar_total, analizar_f5_completo,
-    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo
+    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo, imprimir_winpct
 )
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -63,6 +63,11 @@ def correr_jornada():
                 imprimir_matchup_lr(p, fecha_hoy)
             except Exception as e:
                 print(f"  (matchup L/R no disponible: {e})")
+
+            try:
+                imprimir_winpct(p, fecha_hoy)
+            except Exception as e:
+                print(f"  (win% no disponible: {e})")
 
             try:
                 ctx = contexto_cualitativo(p['local'], p['visitante'], fecha_hoy)
