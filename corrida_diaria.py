@@ -4,7 +4,8 @@ from supabase import create_client
 from motor import (
     obtener_cartelera_dia, obtener_cuotas_espn, obtener_handicap_espn, obtener_total_espn,
     analizar_partido_hoy, analizar_total, analizar_f5_completo,
-    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo, imprimir_winpct
+    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo, imprimir_winpct,
+    proyectar_ponches
 )
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -70,6 +71,16 @@ def correr_jornada():
                 print(f"  (win% no disponible: {e})")
 
             try:
+                ponches_l = proyectar_ponches(p['pitcher_local_id'], fecha_hoy, 2026)
+                ponches_v = proyectar_ponches(p['pitcher_visitante_id'], fecha_hoy, 2026)
+                if ponches_l is not None:
+                    print(f"  Ponches proyectados {p['pitcher_local_nombre']}: {ponches_l}")
+                if ponches_v is not None:
+                    print(f"  Ponches proyectados {p['pitcher_visitante_nombre']}: {ponches_v}")
+            except Exception as e:
+                print(f"  (ponches no disponibles: {e})")
+
+            try:
                 ctx = contexto_cualitativo(p['local'], p['visitante'], fecha_hoy)
                 if ctx['clima']:
                     print(f"  Clima: {ctx['clima']['temperatura_f']}F, viento {ctx['clima']['viento_mph']}mph")
@@ -104,10 +115,3 @@ def correr_jornada():
 
 if __name__ == "__main__":
     correr_jornada()
-def imprimir_proyeccion_ponches(p, fecha_hoy):
-    ponches_local = proyectar_ponches(p['pitcher_local_id'], fecha_hoy, 2026)
-    ponches_visitante = proyectar_ponches(p['pitcher_visitante_id'], fecha_hoy, 2026)
-    if ponches_local is not None:
-        print(f"  Ponches proyectados {p['pitcher_local_nombre']}: {ponches_local}")
-    if ponches_visitante is not None:
-        print(f"  Ponches proyectados {p['pitcher_visitante_nombre']}: {ponches_visitante}")
