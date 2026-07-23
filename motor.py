@@ -525,3 +525,32 @@ def contexto_cualitativo(equipo_local, equipo_visitante, fecha):
     resultado["lesiones_local"] = obtener_lesiones_espn(equipo_local)
     resultado["lesiones_visitante"] = obtener_lesiones_espn(equipo_visitante)
     return resultado
+def obtener_winpct_equipo(team_abbrev, fecha):
+    url = f"https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026&date={fecha}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        for record in data.get("records", []):
+            for team_record in record.get("teamRecords", []):
+                if team_record.get("team", {}).get("abbreviation") == team_abbrev:
+                    wins = team_record.get("wins", 0)
+                    losses = team_record.get("losses", 0)
+                    total = wins + losses
+                    return wins / total if total > 0 else 0.5
+    except Exception:
+        return None
+    return None
+
+def factor_winpct(equipo_local, equipo_visitante, fecha):
+    wp_local = obtener_winpct_equipo(equipo_local, fecha)
+    wp_visitante = obtener_winpct_equipo(equipo_visitante, fecha)
+    if wp_local is None or wp_visitante is None:
+        return None
+    if wp_visitante == 0:
+        return None
+    return wp_local / wp_visitante
+
+def imprimir_winpct(p, fecha_hoy):
+    ratio = factor_winpct(p['local'], p['visitante'], fecha_hoy)
+    if ratio is not None:
+        print(f"  Win% ratio {p['local']}/{p['visitante']}: {ratio:.3f}")
