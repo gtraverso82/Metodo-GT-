@@ -31,7 +31,7 @@ def guardar_diagnostico_total(game_id, fecha, total_esperado, linea_mercado,
         "linea_mercado": linea_mercado, "diferencia": diferencia,
         "park_factor": park_factor, "era_local": era_local, "era_visitante": era_visitante
     }).execute()
-    print(f"Diagnostico: {game_id} (dif: {diferencia:+.2f})")
+    print(f"Diagnostico: {game_id} | Linea mercado: {linea_mercado} | Proyectado modelo: {total_esperado:.2f} | Diferencia: {diferencia:+.2f}")
 
 def correr_jornada():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
@@ -41,6 +41,7 @@ def correr_jornada():
 
     ranking_del_dia = []
     ranking_ponches_del_dia = []
+    ranking_totales_del_dia = []
 
     for p in partidos:
         if p['pitcher_local_id'] is None or p['pitcher_visitante_id'] is None:
@@ -123,6 +124,12 @@ def correr_jornada():
                 guardar_diagnostico_total(game_id, fecha_hoy, total_resultado['total_esperado'],
                                             total_info['linea'], park_factor,
                                             resultado.get('era_local', 0), resultado.get('era_visitante', 0))
+                ranking_totales_del_dia.append({
+                    "partido": f"{p['visitante']} @ {p['local']}",
+                    "linea": total_info['linea'],
+                    "proyectado": total_resultado['total_esperado'],
+                    "diferencia": total_resultado['total_esperado'] - total_info['linea']
+                })
 
             print(f"{p['visitante']} @ {p['local']}: {resultado['recomendacion']} (bandera: {resultado['bandera']})")
 
@@ -138,6 +145,12 @@ def correr_jornada():
     ranking_ponches_ordenado = sorted(ranking_ponches_del_dia, key=lambda x: x['ponches'], reverse=True)
     for i, r in enumerate(ranking_ponches_ordenado, 1):
         print(f"{i}. {r['pitcher']} ({r['equipo']}): {r['ponches']} ponches proyectados")
+
+    print("\n=== RANKING DEL DIA - TOTALES (LINEA VS PROYECCION, SOLO SEGUIMIENTO) ===")
+    ranking_totales_ordenado = sorted(ranking_totales_del_dia, key=lambda x: abs(x['diferencia']), reverse=True)
+    for i, r in enumerate(ranking_totales_ordenado, 1):
+        direccion = "Over" if r['diferencia'] > 0 else "Under"
+        print(f"{i}. {r['partido']}: Linea {r['linea']} | Proyectado {r['proyectado']:.2f} | {direccion} ({r['diferencia']:+.2f})")
 
     print("\n=== Corrida completa ===")
 
