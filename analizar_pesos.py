@@ -38,43 +38,40 @@ def analizar():
     todos = descargar_todo()
     print(f"Total filas: {len(todos)}")
 
-    datos_2022 = [f for f in todos if f["fecha"].startswith("2022")]
+    datos_2022 = sorted([f for f in todos if f["fecha"].startswith("2022")], key=lambda x: x["fecha"])
     datos_2023 = [f for f in todos if f["fecha"].startswith("2023")]
-    print(f"2022 (train): {len(datos_2022)} | 2023 (test): {len(datos_2023)}")
 
-    X_train, y_train = features_y_target(datos_2022)
+    mitad = len(datos_2022) // 2
+    datos_train = datos_2022[:mitad]
+    datos_val = datos_2022[mitad:]
+    print(f"Train (2022 primera mitad): {len(datos_train)} | Validacion (2022 segunda mitad): {len(datos_val)} | Test (2023, intacto): {len(datos_2023)}")
+
+    X_train, y_train = features_y_target(datos_train)
+    X_val, y_val = features_y_target(datos_val)
     X_test, y_test = features_y_target(datos_2023)
-    print(f"Filas usables — train: {len(X_train)} | test: {len(X_test)}")
+    print(f"Filas usables — train: {len(X_train)} | val: {len(X_val)} | test: {len(X_test)}")
 
-    resultados = {}
+    print("\n=== FASE 1: Seleccionar hiperparametros usando SOLO validacion (2022 segunda mitad) ===")
+    mejor_config = {"C": None, "l1_ratio": None, "brier_val": 999}
+    for C in [0.01, 0.05, 0.1, 0.5, 1.0]:
+        for l1_ratio in [0.1, 0.3, 0.5, 0.7, 0.9]:
+            modelo = LogisticRegression(penalty='elasticnet', solver='saga', C=C, l1_ratio=l1_ratio, max_iter=2000)
+            modelo.fit(X_train, y_train)
+            prob_val = modelo.predict_proba(X_val)[:, 1]
+            brier_val = brier_score_loss(y_val, prob_val)
+            if brier_val < mejor_config["brier_val"]:
+                mejor_config = {"C": C, "l1_ratio": l1_ratio, "brier_val": brier_val}
+    print(f"Mejor configuracion en validacion: C={mejor_config['C']}, l1_ratio={mejor_config['l1_ratio']} (Brier val={mejor_config['brier_val']:.5f})")
 
-    modelo_sin_reg = LogisticRegression(penalty=None)
-    modelo_sin_reg.fit(X_train, y_train)
-    prob_sin_reg = modelo_sin_reg.predict_proba(X_test)[:, 1]
-    resultados["Sin regularizar (original)"] = brier_score_loss(y_test, prob_sin_reg)
-    print(f"Coeficientes sin regularizar: {modelo_sin_reg.coef_[0]}")
+    print("\n=== FASE 2: Entrenar con train+validacion (todo 2022), hiperparametros congelados ===")
+    X_train_completo, y_train_completo = features_y_target(datos_2022)
+    modelo_final = LogisticRegression(penalty='elasticnet', solver='saga',
+                                        C=mejor_config["C"], l1_ratio=mejor_config["l1_ratio"], max_iter=2000)
+    modelo_final.fit(X_train_completo, y_train_completo)
 
-    mejores_ridge = {"C": None, "brier": 999}
-    for C in [0.001, 0.01, 0.1, 1.0, 10.0]:
-        modelo_ridge = LogisticRegression(penalty='l2', C=C)
-        modelo_ridge.fit(X_train, y_train)
-        prob_ridge = modelo_ridge.predict_proba(X_test)[:, 1]
-        brier = brier_score_loss(y_test, prob_ridge)
-        print(f"Ridge (C={C}): Brier={brier:.5f} | coef={modelo_ridge.coef_[0]}")
-        if brier < mejores_ridge["brier"]:
-            mejores_ridge = {"C": C, "brier": brier}
-    resultados[f"Ridge (mejor C={mejores_ridge['C']})"] = mejores_ridge["brier"]
-
-    mejores_en = {"C": None, "l1_ratio": None, "brier": 999}
-    for C in [0.01, 0.1, 1.0]:
-        for l1_ratio in [0.3, 0.5, 0.7]:
-            modelo_en = LogisticRegression(penalty='elasticnet', solver='saga', C=C, l1_ratio=l1_ratio, max_iter=2000)
-            modelo_en.fit(X_train, y_train)
-            prob_en = modelo_en.predict_proba(X_test)[:, 1]
-            brier = brier_score_loss(y_test, prob_en)
-            if brier < mejores_en["brier"]:
-                mejores_en = {"C": C, "l1_ratio": l1_ratio, "brier": brier}
-    resultados[f"Elastic Net (mejor C={mejores_en['C']}, l1_ratio={mejores_en['l1_ratio']})"] = mejores_en["brier"]
+    print("\n=== FASE 3: Evaluacion UNICA sobre 2023 (nunca visto hasta ahora) ===")
+    prob_test_elastic = modelo_final.predict_proba(X_test)[:, 1]
+    brier_elastic = brier_score_loss(y_test, prob_test_elastic)
 
     prob_fija = []
     for f in datos_2023:
@@ -86,11 +83,11 @@ def analizar():
         f_abridor_v = fe_v * PESO_ERA_ACTUAL + fk_v * PESO_KBB_ACTUAL
         prob_fija.append(f_abridor_v / (f_abridor_l + f_abridor_v))
     prob_fija = np.array(prob_fija)
-    resultados["Pesos actuales (fijo)"] = brier_score_loss(y_test, prob_fija)
+    brier_fijo = brier_score_loss(y_test, prob_fija)
 
-    print(f"\n=== RESULTADOS FINALES (evaluado en 2023) ===")
-    for nombre, brier in sorted(resultados.items(), key=lambda x: x[1]):
-        print(f"{nombre}: {brier:.5f}")
+    print(f"\n=== RESULTADO FINAL (validacion metodologicamente correcta) ===")
+    print(f"Pesos actuales (fijo): {brier_fijo:.5f}")
+    print(f"Elastic Net (C={mejor_config['C']}, l1_ratio={mejor_config['l1_ratio']}, hiperparametros elegidos sin ver test): {brier_elastic:.5f}")
 
 if __name__ == "__main__":
     analizar()
