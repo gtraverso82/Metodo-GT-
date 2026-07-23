@@ -4,18 +4,16 @@ from supabase import create_client
 from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import KFold
 from sklearn.metrics import brier_score_loss
-from motor import calibrar_platt
+from motor import logit, PLATT_A, PLATT_B
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-LIGA_ERA_PROMEDIO = 4.20
-PRIOR_IP_ABRIDOR = 45
-
-def runs_desde_era(era_rival):
-    f_era = era_rival / LIGA_ERA_PROMEDIO
-    return 4.35 * f_era
+def invertir_platt(prob_calibrada):
+    z_calibrado = logit(prob_calibrada)
+    z_cruda = (z_calibrado - PLATT_B) / PLATT_A
+    return 1 / (1 + np.exp(-z_cruda))
 
 def correr_comparacion():
     print("Descargando datos de backtesting_resultados...")
@@ -23,7 +21,7 @@ def correr_comparacion():
     offset = 0
     while True:
         res = supabase.table("backtesting_resultados").select(
-            "era_shrink_local, era_shrink_visitante, gano_local"
+            "prob_local_era, gano_local"
         ).range(offset, offset + 999).execute()
         if not res.data:
             break
@@ -32,24 +30,13 @@ def correr_comparacion():
 
     print(f"Total filas: {len(todos)}")
 
-    prob_cruda = []
-    gano = []
-    for fila in todos:
-        era_l = fila["era_shrink_local"]
-        era_v = fila["era_shrink_visitante"]
-        if era_l is None or era_v is None:
-            continue
-        runs_l = runs_desde_era(era_v)
-        runs_v = runs_desde_era(era_l)
-        p_cruda = runs_l / (runs_l + runs_v)
-        prob_cruda.append(p_cruda)
-        gano.append(1 if fila["gano_local"] else 0)
+    prob_platt = np.array([f["prob_local_era"] for f in todos if f["prob_local_era"] is not None])
+    gano = np.array([f["gano_local"] for f in todos if f["prob_local_era"] is not None]).astype(int)
 
-    prob_cruda = np.array(prob_cruda)
-    gano = np.array(gano)
-    print(f"Filas usables: {len(prob_cruda)}")
+    print(f"Filas usables: {len(prob_platt)}")
 
-    prob_platt = np.array([calibrar_platt(p) for p in prob_cruda])
+    prob_cruda = invertir_platt(prob_platt)
+
     brier_platt = brier_score_loss(gano, prob_platt)
     brier_cruda = brier_score_loss(gano, prob_cruda)
 
