@@ -104,3 +104,10 @@ def correr_jornada():
 
 if __name__ == "__main__":
     correr_jornada()
+def imprimir_proyeccion_ponches(p, fecha_hoy):
+    ponches_local = proyectar_ponches(p['pitcher_local_id'], fecha_hoy, 2026)
+    ponches_visitante = proyectar_ponches(p['pitcher_visitante_id'], fecha_hoy, 2026)
+    if ponches_local is not None:
+        print(f"  Ponches proyectados {p['pitcher_local_nombre']}: {ponches_local}")
+    if ponches_visitante is not None:
+        print(f"  Ponches proyectados {p['pitcher_visitante_nombre']}: {ponches_visitante}")
