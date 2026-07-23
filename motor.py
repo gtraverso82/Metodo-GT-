@@ -14,6 +14,7 @@ PLATT_A = 0.5795
 PLATT_B = 0.1449
 LIGA_HR_FB_RATE = 0.105
 FIP_CONSTANT_AJUSTADO = 3.582589285714286
+LIGA_OPS_CONTRA = 0.700
 
 TEAM_IDS = {
     "LAA":108, "AZ":109, "BAL":110, "BOS":111, "CHC":112, "CIN":113, "CLE":114,
@@ -22,6 +23,7 @@ TEAM_IDS = {
     "TEX":140, "TOR":141, "MIN":142, "PHI":143, "ATL":144, "CWS":145, "MIA":146,
     "NYY":147, "MIL":158,
 }
+
 COORDENADAS_ESTADIO = {
     "LAA": (33.8003, -117.8827), "AZ": (33.4455, -112.0667), "BAL": (39.2838, -76.6217),
     "BOS": (42.3467, -71.0972), "CHC": (41.9484, -87.6553), "CIN": (39.0975, -84.5066),
@@ -66,6 +68,7 @@ def sigma_era_muestral(era, ip):
     if ip <= 0:
         return 2.0
     return np.sqrt(9 * max(era, 0.1) / ip)
+
 def gamelog_pitcher(pitcher_id, year):
     url = f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats?stats=gameLog&group=pitching&season={year}"
     r = requests.get(url)
@@ -165,6 +168,7 @@ def bullpen_reciente(team_abbrev, fecha_hoy, year, dias_atras=5):
 
 def winsorizar_bullpen(eras, tope=TOPE_ERA_RELEVISTA):
     return [min(e, tope) for e in eras]
+
 def runs_esperados_completo(era_rival, ip_rival, k_rival, bb_rival, bullpen_eras_rival,
                              ev_propio, barrel_propio, park_factor):
     era_adj = shrink_era(era_rival, ip_rival, PRIOR_IP_ABRIDOR)
@@ -216,6 +220,7 @@ def recomendacion_final(bandera, confianza):
     if bandera == "alineado": return "NO JUGAR — sin edge, Confirmación"
     if confianza < 45: return "CAUTELA — edge moderado, baja confianza"
     return "CRUZAR CON ANÁLISIS CUALITATIVO"
+
 def obtener_cuotas_espn(equipo_local, equipo_visitante, fecha):
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
@@ -299,7 +304,7 @@ def obtener_clima(team_abbrev, fecha):
            f"&hourly=temperature_2m,windspeed_10m,winddirection_10m"
            f"&temperature_unit=fahrenheit&windspeed_unit=mph"
            f"&start_date={fecha}&end_date={fecha}")
-    r = requests.get(url)
+    r = requests.get(url, timeout=10)
     data = r.json()
     try:
         hourly = data["hourly"]
@@ -309,6 +314,7 @@ def obtener_clima(team_abbrev, fecha):
                 "direccion_viento": hourly["winddirection_10m"][idx]}
     except (KeyError, IndexError):
         return None
+
 def analizar_partido_hoy(equipo_local, equipo_visitante, pitcher_id_local, pitcher_id_visitante,
                           park_factor, cuota_ml_local, cuota_ml_visitante,
                           fecha_hoy=None, year=2026, inicio_temporada="2026-03-15"):
@@ -397,6 +403,7 @@ def obtener_cartelera_dia(fecha):
                 "pitcher_visitante_id": away_pitcher.get("id"), "pitcher_visitante_nombre": away_pitcher.get("fullName", "No anunciado"),
             })
     return partidos_hoy
+
 def obtener_lineup_confirmado(equipo_abbrev, fecha):
     team_id = TEAM_IDS.get(equipo_abbrev)
     if not team_id:
@@ -415,6 +422,7 @@ def obtener_lineup_confirmado(equipo_abbrev, fecha):
         return None
     except (KeyError, IndexError):
         return None
+
 def obtener_splits_pitcher(pitcher_id, year):
     url = f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats?stats=statSplits&group=pitching&season={year}&sitCodes=vl,vr"
     try:
@@ -441,7 +449,6 @@ def obtener_splits_pitcher(pitcher_id, year):
             ops_vr = ops_val
     return ops_vl, ops_vr
 
-
 def obtener_batside_lote(lista_ids):
     if not lista_ids:
         return {}
@@ -458,8 +465,6 @@ def obtener_batside_lote(lista_ids):
         resultado[persona["id"]] = lado
     return resultado
 
-LIGA_OPS_CONTRA = 0.700
-
 def factor_matchup_lr(ops_vl, ops_vr, lista_batside):
     if ops_vl is None or ops_vr is None or not lista_batside:
         return 1.0
@@ -470,6 +475,7 @@ def factor_matchup_lr(ops_vl, ops_vr, lista_batside):
         return 1.0
     ops_esperado = (ops_vl * n_l + ops_vr * n_r) / total
     return ops_esperado / LIGA_OPS_CONTRA
+
 def imprimir_matchup_lr(p, fecha_hoy):
     lineup_local = obtener_lineup_confirmado(p['local'], fecha_hoy)
     lineup_visitante = obtener_lineup_confirmado(p['visitante'], fecha_hoy)
@@ -485,6 +491,7 @@ def imprimir_matchup_lr(p, fecha_hoy):
         ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
         factor_l = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
         print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l:.3f}")
+
 def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
@@ -525,16 +532,21 @@ def contexto_cualitativo(equipo_local, equipo_visitante, fecha):
     resultado["lesiones_local"] = obtener_lesiones_espn(equipo_local)
     resultado["lesiones_visitante"] = obtener_lesiones_espn(equipo_visitante)
     return resultado
+
 def obtener_winpct_equipo(team_abbrev, fecha):
+    team_id = TEAM_IDS.get(team_abbrev)
+    if not team_id:
+        return None
     url = f"https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026&date={fecha}"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
         for record in data.get("records", []):
             for team_record in record.get("teamRecords", []):
-                if team_record.get("team", {}).get("abbreviation") == team_abbrev:
-                    wins = team_record.get("wins", 0)
-                    losses = team_record.get("losses", 0)
+                if team_record.get("team", {}).get("id") == team_id:
+                    lr = team_record.get("leagueRecord", {})
+                    wins = lr.get("wins", 0)
+                    losses = lr.get("losses", 0)
                     total = wins + losses
                     return wins / total if total > 0 else 0.5
     except Exception:
