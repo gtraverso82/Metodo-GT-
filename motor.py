@@ -581,3 +581,19 @@ def analizar_handicap_multiple(runs_local, runs_visitante, favorito="local",
             resultado_linea["diferencia"] = prob_cubre - prob_mercado
         resultados[linea] = resultado_linea
     return resultados
+def proyectar_innings_por_aparicion(pitcher_id, fecha_hoy, year):
+    gamelog = gamelog_pitcher(pitcher_id, year)
+    apariciones = [ap for ap in gamelog if ap["date"] < fecha_hoy]
+    if not apariciones:
+        return 5.0
+    ips = [parse_ip(ap["stat"].get("inningsPitched", "0.0")) for ap in apariciones]
+    return sum(ips) / len(ips)
+
+def proyectar_ponches(pitcher_id, fecha_hoy, year):
+    ip_t, k_t, bb_t, era = stats_abridor_hasta_hoy(pitcher_id, fecha_hoy, year)
+    if ip_t <= 0:
+        return None
+    k_por_ip = k_t / ip_t
+    k_por_ip_shrink = (k_por_ip * ip_t + (LIGA_KBB_POR_IP + 0.85) * PRIOR_IP_ABRIDOR) / (ip_t + PRIOR_IP_ABRIDOR)
+    ip_esperado = proyectar_innings_por_aparicion(pitcher_id, fecha_hoy, year)
+    return round(k_por_ip_shrink * ip_esperado, 2)
