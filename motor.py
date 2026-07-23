@@ -566,3 +566,18 @@ def imprimir_winpct(p, fecha_hoy):
     ratio = factor_winpct(p['local'], p['visitante'], fecha_hoy)
     if ratio is not None:
         print(f"  Win% ratio {p['local']}/{p['visitante']}: {ratio:.3f}")
+def analizar_handicap_multiple(runs_local, runs_visitante, favorito="local",
+                                 lineas=(1.5,), cuotas_handicap=None, n_sim=N_SIMULACIONES):
+    sim_l = simular_negbinom(runs_local, n_sim)
+    sim_v = simular_negbinom(runs_visitante, n_sim)
+    margen = sim_l - sim_v if favorito == "local" else sim_v - sim_l
+    resultados = {}
+    for linea in lineas:
+        prob_cubre = np.mean(margen > linea)
+        resultado_linea = {"prob_cubre": prob_cubre}
+        if cuotas_handicap and linea in cuotas_handicap:
+            prob_mercado = cuota_a_prob(cuotas_handicap[linea])
+            resultado_linea["prob_mercado"] = prob_mercado
+            resultado_linea["diferencia"] = prob_cubre - prob_mercado
+        resultados[linea] = resultado_linea
+    return resultados
