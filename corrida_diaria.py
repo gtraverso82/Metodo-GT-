@@ -39,6 +39,9 @@ def correr_jornada():
     partidos = obtener_cartelera_dia(fecha_hoy)
     print(f"Partidos encontrados: {len(partidos)}")
 
+    ranking_del_dia = []
+    ranking_ponches_del_dia = []
+
     for p in partidos:
         if p['pitcher_local_id'] is None or p['pitcher_visitante_id'] is None:
             print(f"Saltando: {p['visitante']} @ {p['local']} - abridor no confirmado")
@@ -60,6 +63,15 @@ def correr_jornada():
             )
             game_id = f"{p['visitante']}@{p['local']}_{fecha_hoy.replace('-','')}"
 
+            favorito = p['local'] if resultado['prob_local'] >= 0.5 else p['visitante']
+            prob_favorito = resultado['prob_local'] if resultado['prob_local'] >= 0.5 else 1 - resultado['prob_local']
+            ranking_del_dia.append({
+                "partido": f"{p['visitante']} @ {p['local']}",
+                "favorito": favorito,
+                "prob": prob_favorito,
+                "bandera": resultado['bandera']
+            })
+
             try:
                 imprimir_matchup_lr(p, fecha_hoy)
             except Exception as e:
@@ -75,8 +87,14 @@ def correr_jornada():
                 ponches_v = proyectar_ponches(p['pitcher_visitante_id'], fecha_hoy, 2026)
                 if ponches_l is not None:
                     print(f"  Ponches proyectados {p['pitcher_local_nombre']}: {ponches_l}")
+                    ranking_ponches_del_dia.append({
+                        "pitcher": p['pitcher_local_nombre'], "equipo": p['local'], "ponches": ponches_l
+                    })
                 if ponches_v is not None:
                     print(f"  Ponches proyectados {p['pitcher_visitante_nombre']}: {ponches_v}")
+                    ranking_ponches_del_dia.append({
+                        "pitcher": p['pitcher_visitante_nombre'], "equipo": p['visitante'], "ponches": ponches_v
+                    })
             except Exception as e:
                 print(f"  (ponches no disponibles: {e})")
 
@@ -111,7 +129,17 @@ def correr_jornada():
         except Exception as e:
             print(f"Error en {p['visitante']} @ {p['local']}: {e}")
 
-    print("=== Corrida completa ===")
+    print("\n=== RANKING DEL DIA - FAVORITOS (SOLO SEGUIMIENTO Y APRENDIZAJE, NO ES RECOMENDACION DE APUESTA) ===")
+    ranking_ordenado = sorted(ranking_del_dia, key=lambda x: x['prob'], reverse=True)
+    for i, r in enumerate(ranking_ordenado, 1):
+        print(f"{i}. {r['favorito']} favorito ({r['prob']:.1%}) - {r['partido']} [bandera: {r['bandera']}]")
+
+    print("\n=== RANKING DEL DIA - PONCHES PROYECTADOS (SOLO SEGUIMIENTO Y APRENDIZAJE) ===")
+    ranking_ponches_ordenado = sorted(ranking_ponches_del_dia, key=lambda x: x['ponches'], reverse=True)
+    for i, r in enumerate(ranking_ponches_ordenado, 1):
+        print(f"{i}. {r['pitcher']} ({r['equipo']}): {r['ponches']} ponches proyectados")
+
+    print("\n=== Corrida completa ===")
 
 if __name__ == "__main__":
     correr_jornada()
