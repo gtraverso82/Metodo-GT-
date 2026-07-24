@@ -1,36 +1,29 @@
 from datetime import datetime
 from motor import (
-    obtener_cartelera_dia, obtener_cuotas_espn, obtener_total_espn,
-    analizar_partido_hoy, analizar_total, PARK_FACTORS,
+    obtener_cartelera_dia, analizar_partido_hoy, analizar_total, PARK_FACTORS,
     imprimir_matchup_lr, imprimir_winpct, proyectar_ponches
 )
 
-def analizar_partido_puntual():
+def analizar_puntual(local, visitante, cuota_local, cuota_visitante, linea_total=None, cuota_over=None, cuota_under=None):
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     partidos = obtener_cartelera_dia(fecha_hoy)
-    juego = next((p for p in partidos if p['local'] == 'MIL' and p['visitante'] == 'COL'), None)
+    juego = next((p for p in partidos if p['local'] == local and p['visitante'] == visitante), None)
 
     if not juego:
-        print("Partido no encontrado en la cartelera de hoy.")
+        print(f"Partido {visitante} @ {local} no encontrado.")
         return
 
-    print(f"Partido: {juego['visitante']} @ {juego['local']}")
+    print(f"\n=== {visitante} @ {local} ===")
     print(f"Abridores: {juego['pitcher_visitante_nombre']} vs {juego['pitcher_local_nombre']}")
 
-    cuota_local, cuota_visitante = obtener_cuotas_espn('MIL', 'COL', fecha_hoy)
-    if cuota_local is None:
-        print("Sin cuotas disponibles todavia.")
-        return
-    print(f"Cuotas: MIL {cuota_local:+d} | COL {cuota_visitante:+d}")
-
-    park_factor = PARK_FACTORS.get('MIL', 1.00)
+    park_factor = PARK_FACTORS.get(local, 1.00)
     resultado = analizar_partido_hoy(
-        equipo_local='MIL', equipo_visitante='COL',
+        equipo_local=local, equipo_visitante=visitante,
         pitcher_id_local=juego['pitcher_local_id'], pitcher_id_visitante=juego['pitcher_visitante_id'],
         park_factor=park_factor, cuota_ml_local=cuota_local, cuota_ml_visitante=cuota_visitante,
         fecha_hoy=fecha_hoy
     )
-    print(f"\nProb. modelo: MIL {resultado['prob_local']:.1%} | COL {1-resultado['prob_local']:.1%}")
+    print(f"Prob. modelo: {local} {resultado['prob_local']:.1%} | {visitante} {1-resultado['prob_local']:.1%}")
     print(f"Bandera: {resultado['bandera']} | Recomendacion: {resultado['recomendacion']}")
 
     try:
@@ -50,13 +43,11 @@ def analizar_partido_puntual():
     except Exception as e:
         print(f"(ponches no disponibles: {e})")
 
-    total_info = obtener_total_espn('MIL', 'COL', fecha_hoy)
-    if total_info:
+    if linea_total:
         total_resultado = analizar_total(resultado['runs_local'], resultado['runs_visitante'],
-                                            total_info['over_odds'], total_info['under_odds'], total_info['linea'])
-        print(f"\nTotal: Linea {total_info['linea']} | Proyectado {total_resultado['total_esperado']:.2f}")
-    else:
-        print("\nTotal: no disponible")
+                                            cuota_over, cuota_under, linea_total)
+        print(f"Total: Linea {linea_total} | Proyectado {total_resultado['total_esperado']:.2f}")
 
 if __name__ == "__main__":
-    analizar_partido_puntual()
+    analizar_puntual('WSH', 'AZ', cuota_local=106, cuota_visitante=-119, linea_total=9.5, cuota_over=-111, cuota_under=-106)
+    analizar_puntual('CWS', 'HOU', cuota_local=-130, cuota_visitante=115, linea_total=9.0, cuota_over=-102, cuota_under=-115)
