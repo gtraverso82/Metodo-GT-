@@ -33,6 +33,19 @@ def guardar_diagnostico_total(game_id, fecha, total_esperado, linea_mercado,
     }).execute()
     print(f"Diagnostico: {game_id} | Linea mercado: {linea_mercado} | Proyectado modelo: {total_esperado:.2f} | Diferencia: {diferencia:+.2f}")
 
+def guardar_auditoria_descarte(game_id, fecha, tipo_descarte, prob_modelo, prob_mercado,
+                                  diferencia_moneyline, linea_total, proyeccion_total,
+                                  diferencia_total, bandera_moneyline, motivo):
+    supabase.table("auditoria_descartes").insert({
+        "game_id": game_id, "fecha": fecha, "tipo_descarte": tipo_descarte,
+        "prob_modelo": prob_modelo, "prob_mercado": prob_mercado,
+        "diferencia_moneyline": diferencia_moneyline,
+        "linea_total": linea_total, "proyeccion_total": proyeccion_total,
+        "diferencia_total": diferencia_total, "bandera_moneyline": bandera_moneyline,
+        "motivo": motivo
+    }).execute()
+    print(f"  [AUDITORIA] {game_id}: {motivo}")
+
 def correr_jornada():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     print(f"=== Corrida diaria: {fecha_hoy} ===")
@@ -117,6 +130,10 @@ def correr_jornada():
             guardar_snapshot(game_id, "espn", "moneyline", p['visitante'], cuota_visitante,
                               modelo_prob=1-resultado['prob_local'], modelo_bandera=resultado['bandera'])
 
+            diferencia_total_calc = None
+            linea_total_calc = None
+            proyeccion_total_calc = None
+
             total_info = obtener_total_espn(p['local'], p['visitante'], fecha_hoy)
             if total_info:
                 total_resultado = analizar_total(resultado['runs_local'], resultado['runs_visitante'],
@@ -124,12 +141,30 @@ def correr_jornada():
                 guardar_diagnostico_total(game_id, fecha_hoy, total_resultado['total_esperado'],
                                             total_info['linea'], park_factor,
                                             resultado.get('era_local', 0), resultado.get('era_visitante', 0))
+                linea_total_calc = total_info['linea']
+                proyeccion_total_calc = total_resultado['total_esperado']
+                diferencia_total_calc = proyeccion_total_calc - linea_total_calc
                 ranking_totales_del_dia.append({
                     "partido": f"{p['visitante']} @ {p['local']}",
-                    "linea": total_info['linea'],
-                    "proyectado": total_resultado['total_esperado'],
-                    "diferencia": total_resultado['total_esperado'] - total_info['linea']
+                    "linea": linea_total_calc,
+                    "proyectado": proyeccion_total_calc,
+                    "diferencia": diferencia_total_calc
                 })
+
+            # --- Auditoria de descartes: Total con diferencia >= 1.0 pero moneyline "alineado" ---
+            if resultado['bandera'] == 'alineado' and diferencia_total_calc is not None and abs(diferencia_total_calc) >= 1.0:
+                direccion = "Over" if diferencia_total_calc > 0 else "Under"
+                motivo = (f"Moneyline sin edge (alineado), pero Total con diferencia significativa "
+                          f"({direccion} {diferencia_total_calc:+.2f}). Revisar manualmente: posible variable "
+                          f"no capturada por el modelo (bullpen, clima, lineup) o simplemente varianza normal.")
+                guardar_auditoria_descarte(
+                    game_id, fecha_hoy, tipo_descarte="total_alto_moneyline_alineado",
+                    prob_modelo=resultado['prob_local'], prob_mercado=None,
+                    diferencia_moneyline=None,
+                    linea_total=linea_total_calc, proyeccion_total=proyeccion_total_calc,
+                    diferencia_total=diferencia_total_calc, bandera_moneyline=resultado['bandera'],
+                    motivo=motivo
+                )
 
             print(f"{p['visitante']} @ {p['local']}: {resultado['recomendacion']} (bandera: {resultado['bandera']})")
 
