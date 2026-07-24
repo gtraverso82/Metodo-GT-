@@ -304,16 +304,21 @@ def obtener_clima(team_abbrev, fecha):
            f"&hourly=temperature_2m,windspeed_10m,winddirection_10m"
            f"&temperature_unit=fahrenheit&windspeed_unit=mph"
            f"&start_date={fecha}&end_date={fecha}")
-    r = requests.get(url, timeout=10)
-    data = r.json()
-    try:
-        hourly = data["hourly"]
-        idx = 23
-        return {"temperatura_f": hourly["temperature_2m"][idx],
-                "viento_mph": hourly["windspeed_10m"][idx],
-                "direccion_viento": hourly["winddirection_10m"][idx]}
-    except (KeyError, IndexError):
-        return None
+    for intento in range(2):
+        try:
+            r = requests.get(url, timeout=20)
+            data = r.json()
+            hourly = data["hourly"]
+            idx = 23
+            return {"temperatura_f": hourly["temperature_2m"][idx],
+                    "viento_mph": hourly["windspeed_10m"][idx],
+                    "direccion_viento": hourly["winddirection_10m"][idx]}
+        except (KeyError, IndexError, requests.exceptions.RequestException):
+            if intento == 0:
+                continue
+            print(f"    (clima no disponible tras 2 intentos para {team_abbrev})")
+            return None
+    return None
 
 def analizar_partido_hoy(equipo_local, equipo_visitante, pitcher_id_local, pitcher_id_visitante,
                           park_factor, cuota_ml_local, cuota_ml_visitante,
@@ -566,21 +571,7 @@ def imprimir_winpct(p, fecha_hoy):
     ratio = factor_winpct(p['local'], p['visitante'], fecha_hoy)
     if ratio is not None:
         print(f"  Win% ratio {p['local']}/{p['visitante']}: {ratio:.3f}")
-def analizar_handicap_multiple(runs_local, runs_visitante, favorito="local",
-                                 lineas=(1.5,), cuotas_handicap=None, n_sim=N_SIMULACIONES):
-    sim_l = simular_negbinom(runs_local, n_sim)
-    sim_v = simular_negbinom(runs_visitante, n_sim)
-    margen = sim_l - sim_v if favorito == "local" else sim_v - sim_l
-    resultados = {}
-    for linea in lineas:
-        prob_cubre = np.mean(margen > linea)
-        resultado_linea = {"prob_cubre": prob_cubre}
-        if cuotas_handicap and linea in cuotas_handicap:
-            prob_mercado = cuota_a_prob(cuotas_handicap[linea])
-            resultado_linea["prob_mercado"] = prob_mercado
-            resultado_linea["diferencia"] = prob_cubre - prob_mercado
-        resultados[linea] = resultado_linea
-    return resultados
+
 def proyectar_innings_por_aparicion(pitcher_id, fecha_hoy, year):
     gamelog = gamelog_pitcher(pitcher_id, year)
     apariciones = [ap for ap in gamelog if ap["date"] < fecha_hoy]
@@ -597,3 +588,19 @@ def proyectar_ponches(pitcher_id, fecha_hoy, year):
     k_por_ip_shrink = (k_por_ip * ip_t + (LIGA_KBB_POR_IP + 0.85) * PRIOR_IP_ABRIDOR) / (ip_t + PRIOR_IP_ABRIDOR)
     ip_esperado = proyectar_innings_por_aparicion(pitcher_id, fecha_hoy, year)
     return round(k_por_ip_shrink * ip_esperado, 2)
+
+def analizar_handicap_multiple(runs_local, runs_visitante, favorito="local",
+                                 lineas=(1.5,), cuotas_handicap=None, n_sim=N_SIMULACIONES):
+    sim_l = simular_negbinom(runs_local, n_sim)
+    sim_v = simular_negbinom(runs_visitante, n_sim)
+    margen = sim_l - sim_v if favorito == "local" else sim_v - sim_l
+    resultados = {}
+    for linea in lineas:
+        prob_cubre = np.mean(margen > linea)
+        resultado_linea = {"prob_cubre": prob_cubre}
+        if cuotas_handicap and linea in cuotas_handicap:
+            prob_mercado = cuota_a_prob(cuotas_handicap[linea])
+            resultado_linea["prob_mercado"] = prob_mercado
+            resultado_linea["diferencia"] = prob_cubre - prob_mercado
+        resultados[linea] = resultado_linea
+    return resultados
