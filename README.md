@@ -116,3 +116,36 @@ Detectado desde el 18 de julio: el modelo **subestima sistemáticamente partidos
 - **22 julio**: workflow de matchup L/R falló por timeout indefinido en `obtener_clima()` (Open-Meteo) — corregido con `timeout=10`.
 - **23 julio**: bug en `obtener_winpct_equipo()` — comparaba por `abbreviation` cuando el JSON de standings solo expone `id` — corregido para comparar por `team_id`.
 - **23 julio**: duplicados en `backtesting_resultados` y `diagnostico_total` por ejecuciones manuales repetidas del mismo workflow — limpiados vía `DELETE` conservando el registro más reciente por `game_id`.
+
+# Método GT — Actualización README (29 de julio, 2026)
+
+## Nuevo hallazgo: Auditoría del mercado de Totales — error de medición corregido
+
+**Contexto:** el 28 de julio se calculó un balance de precisión del mercado de Total sobre 61 partidos, obteniendo un acierto direccional de solo 31.1% — una cifra alarmante que sugería un bug sistemático grave.
+
+**Error encontrado en la auditoría técnica:** 18 de esos 61 partidos correspondían al rescate histórico de jornadas del 17, 19 y 20 de julio, donde `linea_mercado` se había llenado con un valor de **fallback** (`total_real` mismo) por la imposibilidad de obtener cuotas históricas de ESPN. Estos 18 registros generaban automáticamente `total_real = linea_mercado`, y la fórmula de comparación (`SIGN(...) = SIGN(...)`) los contaba como "fallo" en vez de excluirlos como no comparables.
+
+**Balance corregido (excluyendo los 18 registros contaminados):**
+
+| Métrica | Con datos contaminados | Corregido |
+|---|---|---|
+| Partidos comparables | 61 | **43** |
+| Acierto direccional | 31.1% | **44.2%** |
+| Error promedio modelo | 4.09 | 4.05 |
+| Error promedio mercado | 2.80 | **3.97** (casi igual al modelo) |
+
+**Conclusión:** la evidencia ya NO respalda la hipótesis de un bug estructural grave en el mercado de Total. El desempeño del modelo (44% de acierto, error casi idéntico al mercado) es compatible con la varianza normal del béisbol, no con un error sistemático de diseño.
+
+**Lección metodológica clave:** el problema no estaba en el simulador, estaba en cómo medíamos su desempeño — mezclar datos de fuentes distintas (mercado real vs. fallback histórico) sin distinguirlos contaminó el análisis. Antes de modificar la arquitectura del modelo, siempre auditar primero la calidad del proceso de medición.
+
+## Regla nueva a partir de este hallazgo
+
+- **Nunca usar datos de fallback histórico (donde `linea_mercado` = resultado real) en cálculos de precisión del modelo.** Marcar estos registros de forma explícita o excluirlos siempre de análisis de desempeño.
+- Reevaluar el mercado de Totales para hipótesis estructurales (correlación entre equipos, dispersión específica) solo cuando exista una muestra de 100-200 partidos **genuinamente comparables** (línea de mercado real, no fallback).
+- Antes de cualquier cambio a la arquitectura del modelo, repetir el proceso de auditoría técnica: verificar SQL, emparejamiento de datos, duplicados, y manejo de casos límite (pushes, fechas repetidas).
+
+## Estado actualizado del progreso
+
+- Jornadas registradas: 11 (17, 19, 20, 21, 22*, 23, 24, 25*, 26*, 27, 28 de julio) — *sin resultado real cargado todavía
+- Partidos genuinamente comparables para diagnóstico de Total: 43
+- Meta ajustada: 100-200 partidos comparables antes de reevaluar hipótesis estructurales (más específica que la meta original de "15-20 jornadas", ya que el volumen de partidos importa más que el número de días)
