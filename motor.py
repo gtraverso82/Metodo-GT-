@@ -343,8 +343,18 @@ def analizar_partido_hoy(equipo_local, equipo_visitante, pitcher_id_local, pitch
     bandera = "extrema" if abs(diff) > 0.15 else ("moderada" if abs(diff) > 0.06 else "alineado")
     confianza = calcular_confianza(ip_l, ip_v, len(bp_l), len(bp_v), bandera)
     recomendacion = recomendacion_final(bandera, confianza)
+    # --- NUEVO: bullpen ERA (winsorizado) y conteo de relevistas usados, para
+    # instrumentacion (Fase 0). No afecta el calculo del modelo, solo se expone
+    # para que corrida_diaria.py pueda guardarlo en contexto_partido. ---
+    bp_l_topado = winsorizar_bullpen(bp_l) if bp_l else []
+    bp_v_topado = winsorizar_bullpen(bp_v) if bp_v else []
+    bullpen_era_local = round(np.mean(bp_l_topado), 2) if bp_l_topado else None
+    bullpen_era_visitante = round(np.mean(bp_v_topado), 2) if bp_v_topado else None
     return {"prob_local": prob_l, "bandera": bandera, "confianza": confianza,
-            "recomendacion": recomendacion, "runs_local": runs_l, "runs_visitante": runs_v}
+            "recomendacion": recomendacion, "runs_local": runs_l, "runs_visitante": runs_v,
+            "era_local": era_l, "era_visitante": era_v,
+            "bullpen_era_local": bullpen_era_local, "bullpen_era_visitante": bullpen_era_visitante,
+            "bullpen_n_relevistas_local": len(bp_l), "bullpen_n_relevistas_visitante": len(bp_v)}
 
 def analizar_total(runs_local, runs_visitante, cuota_over=None, cuota_under=None, linea=None, n_sim=N_SIMULACIONES):
     sim_l = simular_negbinom(runs_local, n_sim)
@@ -481,21 +491,38 @@ def factor_matchup_lr(ops_vl, ops_vr, lista_batside):
     ops_esperado = (ops_vl * n_l + ops_vr * n_r) / total
     return ops_esperado / LIGA_OPS_CONTRA
 
-def imprimir_matchup_lr(p, fecha_hoy):
+def calcular_matchup_lr(p, fecha_hoy):
+    """
+    NUEVO (Fase 0 - instrumentacion): version que RETORNA los factores de
+    matchup L/R en vez de solo imprimirlos, para poder guardarlos en
+    contexto_partido. No cambia ningun calculo existente.
+    Retorna dict: {"factor_pitcher_visitante_vs_lineup_local": float o None,
+                    "factor_pitcher_local_vs_lineup_visitante": float o None}
+    """
+    resultado = {"factor_pitcher_visitante_vs_lineup_local": None,
+                 "factor_pitcher_local_vs_lineup_visitante": None}
     lineup_local = obtener_lineup_confirmado(p['local'], fecha_hoy)
     lineup_visitante = obtener_lineup_confirmado(p['visitante'], fecha_hoy)
     if lineup_local:
         ids_local = [j['id'] for j in lineup_local]
         lados_local = list(obtener_batside_lote(ids_local).values())
         ops_vl_v, ops_vr_v = obtener_splits_pitcher(p['pitcher_visitante_id'], 2026)
-        factor_v = factor_matchup_lr(ops_vl_v, ops_vr_v, lados_local)
-        print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {factor_v:.3f}")
+        resultado["factor_pitcher_visitante_vs_lineup_local"] = factor_matchup_lr(ops_vl_v, ops_vr_v, lados_local)
     if lineup_visitante:
         ids_visitante = [j['id'] for j in lineup_visitante]
         lados_visitante = list(obtener_batside_lote(ids_visitante).values())
         ops_vl_l, ops_vr_l = obtener_splits_pitcher(p['pitcher_local_id'], 2026)
-        factor_l = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
-        print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {factor_l:.3f}")
+        resultado["factor_pitcher_local_vs_lineup_visitante"] = factor_matchup_lr(ops_vl_l, ops_vr_l, lados_visitante)
+    return resultado
+
+def imprimir_matchup_lr(p, fecha_hoy):
+    factores = calcular_matchup_lr(p, fecha_hoy)
+    fv = factores["factor_pitcher_visitante_vs_lineup_local"]
+    fl = factores["factor_pitcher_local_vs_lineup_visitante"]
+    if fv is not None:
+        print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {fv:.3f}")
+    if fl is not None:
+        print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {fl:.3f}")
 
 def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
     fecha_espn = fecha.replace("-", "")
