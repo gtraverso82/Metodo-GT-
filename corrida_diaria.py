@@ -4,13 +4,19 @@ from supabase import create_client
 from motor import (
     obtener_cartelera_dia, obtener_cuotas_espn, obtener_handicap_espn, obtener_total_espn,
     analizar_partido_hoy, analizar_total, analizar_f5_completo,
-    PARK_FACTORS, imprimir_matchup_lr, contexto_cualitativo, imprimir_winpct,
-    proyectar_ponches
+    PARK_FACTORS, imprimir_matchup_lr, calcular_matchup_lr, contexto_cualitativo,
+    imprimir_winpct, factor_winpct, proyectar_ponches
 )
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def ya_capturado_hoy(game_id):
+    """Verifica si este partido ya tiene una fila en diagnostico_total (evita duplicados
+    cuando el cron corre varias veces al dia para cubrir juegos de horarios distintos)."""
+    resultado = supabase.table("diagnostico_total").select("id").eq("game_id", game_id).execute()
+    return len(resultado.data) > 0
 
 def guardar_snapshot(game_id, bookmaker_key, market_key, outcome_name, price,
                       point=None, modelo_prob=None, modelo_bandera=None,
@@ -46,6 +52,46 @@ def guardar_auditoria_descarte(game_id, fecha, tipo_descarte, prob_modelo, prob_
     }).execute()
     print(f"  [AUDITORIA] {game_id}: {motivo}")
 
+def guardar_contexto_partido(game_id, fecha, park_factor, ctx, matchup, winpct_ratio,
+                               bullpen_era_local, bullpen_era_visitante,
+                               bullpen_n_local, bullpen_n_visitante):
+    """
+    NUEVO (Fase 0 - instrumentacion). Guarda en contexto_partido las variables
+    contextuales que hoy NO estan en diagnostico_total ni backtesting_resultados,
+    para poder evaluarlas en el futuro con suficiente historico:
+    clima real, lesiones, matchup L/R, win% ratio, bullpen ERA/carga reciente,
+    park_factor, y ESPN predictor (como referencia externa).
+    No afecta el calculo del modelo ni las tablas existentes.
+    """
+    clima = ctx.get("clima") or {}
+    espn_pred = ctx.get("espn_predictor") or {}
+    lesiones_local = ctx.get("lesiones_local") or []
+    lesiones_visitante = ctx.get("lesiones_visitante") or []
+
+    supabase.table("contexto_partido").insert({
+        "game_id": game_id,
+        "fecha": fecha,
+        "park_factor": park_factor,
+        "clima_temp_f": clima.get("temperatura_f"),
+        "clima_viento_mph": clima.get("viento_mph"),
+        "clima_direccion_viento": clima.get("direccion_viento"),
+        "bullpen_era_local": bullpen_era_local,
+        "bullpen_era_visitante": bullpen_era_visitante,
+        "bullpen_n_relevistas_local": bullpen_n_local,
+        "bullpen_n_relevistas_visitante": bullpen_n_visitante,
+        "matchup_factor_pitcher_visitante_vs_lineup_local":
+            matchup.get("factor_pitcher_visitante_vs_lineup_local"),
+        "matchup_factor_pitcher_local_vs_lineup_visitante":
+            matchup.get("factor_pitcher_local_vs_lineup_visitante"),
+        "winpct_ratio_local_visitante": winpct_ratio,
+        "espn_predictor_prob_local": espn_pred.get("prob_local"),
+        "espn_predictor_prob_visitante": espn_pred.get("prob_visitante"),
+        "lesiones_local": ", ".join(lesiones_local) if lesiones_local else None,
+        "lesiones_visitante": ", ".join(lesiones_visitante) if lesiones_visitante else None,
+    }).execute()
+    print(f"  [CONTEXTO] {game_id}: guardado (bullpen_local={bullpen_era_local}, "
+          f"bullpen_visitante={bullpen_era_visitante}, winpct_ratio={winpct_ratio})")
+
 def correr_jornada():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     print(f"=== Corrida diaria: {fecha_hoy} ===")
@@ -59,6 +105,12 @@ def correr_jornada():
     for p in partidos:
         if p['pitcher_local_id'] is None or p['pitcher_visitante_id'] is None:
             print(f"Saltando: {p['visitante']} @ {p['local']} - abridor no confirmado")
+            continue
+
+        game_id = f"{p['visitante']}@{p['local']}_{fecha_hoy.replace('-','')}"
+
+        if ya_capturado_hoy(game_id):
+            print(f"Ya capturado: {p['visitante']} @ {p['local']} (corrida anterior de hoy)")
             continue
 
         cuota_local, cuota_visitante = obtener_cuotas_espn(p['local'], p['visitante'], fecha_hoy)
@@ -75,7 +127,6 @@ def correr_jornada():
                 park_factor=park_factor, cuota_ml_local=cuota_local, cuota_ml_visitante=cuota_visitante,
                 fecha_hoy=fecha_hoy
             )
-            game_id = f"{p['visitante']}@{p['local']}_{fecha_hoy.replace('-','')}"
 
             favorito = p['local'] if resultado['prob_local'] >= 0.5 else p['visitante']
             prob_favorito = resultado['prob_local'] if resultado['prob_local'] >= 0.5 else 1 - resultado['prob_local']
@@ -86,13 +137,23 @@ def correr_jornada():
                 "bandera": resultado['bandera']
             })
 
+            matchup = {}
             try:
-                imprimir_matchup_lr(p, fecha_hoy)
+                matchup = calcular_matchup_lr(p, fecha_hoy)
+                fv = matchup.get("factor_pitcher_visitante_vs_lineup_local")
+                fl = matchup.get("factor_pitcher_local_vs_lineup_visitante")
+                if fv is not None:
+                    print(f"  Matchup {p['pitcher_visitante_nombre']} vs lineup {p['local']}: {fv:.3f}")
+                if fl is not None:
+                    print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {fl:.3f}")
             except Exception as e:
                 print(f"  (matchup L/R no disponible: {e})")
 
+            winpct_ratio = None
             try:
-                imprimir_winpct(p, fecha_hoy)
+                winpct_ratio = factor_winpct(p['local'], p['visitante'], fecha_hoy)
+                if winpct_ratio is not None:
+                    print(f"  Win% ratio {p['local']}/{p['visitante']}: {winpct_ratio:.3f}")
             except Exception as e:
                 print(f"  (win% no disponible: {e})")
 
@@ -112,6 +173,7 @@ def correr_jornada():
             except Exception as e:
                 print(f"  (ponches no disponibles: {e})")
 
+            ctx = {}
             try:
                 ctx = contexto_cualitativo(p['local'], p['visitante'], fecha_hoy)
                 if ctx['clima']:
@@ -165,6 +227,16 @@ def correr_jornada():
                     diferencia_total=diferencia_total_calc, bandera_moneyline=resultado['bandera'],
                     motivo=motivo
                 )
+
+            # --- NUEVO: guardar contexto del partido (Fase 0 - instrumentacion) ---
+            try:
+                guardar_contexto_partido(
+                    game_id, fecha_hoy, park_factor, ctx, matchup, winpct_ratio,
+                    resultado.get("bullpen_era_local"), resultado.get("bullpen_era_visitante"),
+                    resultado.get("bullpen_n_relevistas_local"), resultado.get("bullpen_n_relevistas_visitante")
+                )
+            except Exception as e:
+                print(f"  (error guardando contexto_partido: {e})")
 
             print(f"{p['visitante']} @ {p['local']}: {resultado['recomendacion']} (bandera: {resultado['bandera']})")
 
