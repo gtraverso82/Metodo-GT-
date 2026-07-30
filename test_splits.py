@@ -1,24 +1,21 @@
 """
-Hipotesis 1: Valor del K-BB% condicionado por la magnitud de f_era (Prioridad Alta)
-Pregunta: El K-BB% aporta informacion independiente del ERA, o simplemente
-duplica lo que el ERA ya capta? Ese aporte, es mayor cuando el ERA es
-ambiguo (neutral) que cuando es extremo?
+Hipotesis 2: Sesgo local vs. visitante (Prioridad Media-Alta) - ULTIMA
+hipotesis evaluable con el historico actual.
 
-Tabla: backtesting_pesos (columnas: game_id, fecha, f_era_local, f_kbb_local,
-f_era_visitante, f_kbb_visitante, gano_local, runs_reales_local, runs_reales_visitante)
+Pregunta: Es el modelo (GT Classic, usando ERA-shrink que gano el experimento #1)
+mas preciso cuando favorece al equipo local que cuando favorece al visitante?
 
-NOTA IMPORTANTE DE DISEÑO:
-Esta tabla no tiene una probabilidad ya calculada (a diferencia de
-backtesting_resultados). Para medir el "aporte" de K-BB%, se entrenan dos
-regresiones logisticas por cada bucket de magnitud de ERA, usando SOLO datos
-de TRAIN de ese bucket:
-  - Modelo A (solo ERA): usa diff_era = f_era_local - f_era_visitante
-  - Modelo B (ERA + KBB): usa diff_era y diff_kbb = f_kbb_local - f_kbb_visitante
-Los coeficientes se congelan en TRAIN y se aplican sin refit a VAL y TEST del
-mismo bucket. Se compara Brier/LogLoss/Accuracy entre A y B, con bootstrap
-para saber si la diferencia es estadisticamente significativa o es ruido.
+Tabla: backtesting_resultados (columnas: game_id, fecha, prob_local_era,
+prob_local_xfip, gano_local, runs_reales_local, runs_reales_visitante)
 
-ROI: no disponible en esta tabla (no hay cuotas de mercado guardadas). Se omite.
+NOTA DE DISEÑO: se usa prob_local_era (no prob_local_xfip) porque ERA-shrink
+es la metrica que gano el experimento #1 y es la que corre en produccion hoy
+en motor.py. No se entrena ningun modelo nuevo aqui - se evalua el modelo
+existente. La separacion TRAIN/VAL/TEST se mantiene para verificar que
+cualquier patron encontrado se sostenga en el tiempo (no sea un artefacto de
+un periodo especifico), no para ajustar nada.
+
+ROI: no disponible (no hay cuotas de mercado en esta tabla). Se omite.
 
 Uso: python test_splits.py
 """
@@ -27,7 +24,6 @@ import os
 from supabase import create_client
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss, accuracy_score
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -40,16 +36,15 @@ rng = np.random.default_rng(RANDOM_SEED)
 
 
 def cargar_datos():
-    """Carga backtesting_pesos completo via paginacion (Supabase limita a 1000
-    filas por default)."""
+    """Carga backtesting_resultados completo via paginacion."""
     PAGE_SIZE = 1000
     todas_las_filas = []
     inicio = 0
     while True:
         fin = inicio + PAGE_SIZE - 1
-        resultado = supabase.table("backtesting_pesos").select(
-            "game_id, fecha, f_era_local, f_kbb_local, f_era_visitante, "
-            "f_kbb_visitante, gano_local, runs_reales_local, runs_reales_visitante"
+        resultado = supabase.table("backtesting_resultados").select(
+            "game_id, fecha, prob_local_era, prob_local_xfip, gano_local, "
+            "runs_reales_local, runs_reales_visitante"
         ).range(inicio, fin).execute()
         filas = resultado.data
         todas_las_filas.extend(filas)
@@ -61,15 +56,11 @@ def cargar_datos():
     df = pd.DataFrame(todas_las_filas)
     print(f"Total de filas traidas de Supabase (antes de dropna): {len(df)}")
 
-    cols_clave = ["f_era_local", "f_era_visitante", "f_kbb_local",
-                  "f_kbb_visitante", "gano_local"]
-    df = df.dropna(subset=cols_clave)
+    df = df.dropna(subset=["prob_local_era", "gano_local"])
     df["fecha"] = pd.to_datetime(df["fecha"])
     df = df.sort_values("fecha").reset_index(drop=True)
-
-    df["diff_era"] = df["f_era_local"] - df["f_era_visitante"]
-    df["diff_kbb"] = df["f_kbb_local"] - df["f_kbb_visitante"]
     df["gano_local_int"] = df["gano_local"].astype(int)
+    df["favorito"] = np.where(df["prob_local_era"] >= 0.5, "local", "visitante")
 
     if len(df) < 3000:
         print(f"  ADVERTENCIA: se esperaban ~3642 juegos, se obtuvieron {len(df)}. "
@@ -77,74 +68,53 @@ def cargar_datos():
     return df
 
 
-def definir_buckets_era(df_train):
-    """Calcula percentiles 20/50/80 de |diff_era| usando SOLO train."""
-    abs_diff = df_train["diff_era"].abs()
-    p20, p50, p80 = np.percentile(abs_diff, [20, 50, 80])
-    print(f"Percentiles de |diff_era| (definidos en TRAIN): "
-          f"p20={p20:.4f} | p50={p50:.4f} | p80={p80:.4f}")
-    return p20, p50, p80
+def evaluar_grupo(df_grupo, nombre_grupo):
+    if len(df_grupo) < 10:
+        print(f"    {nombre_grupo}: n={len(df_grupo)} (muestra insuficiente, se omite)")
+        return None
+
+    y_true = df_grupo["gano_local_int"].values
+    y_prob = df_grupo["prob_local_era"].clip(0.001, 0.999).values
+    y_pred = (y_prob >= 0.5).astype(int)
+
+    # "Acierto del favorito": si favorito era local, acierto = gano_local; si
+    # favorito era visitante, acierto = no gano_local
+    favorito_acerto = (y_pred == y_true)
+
+    acc = accuracy_score(y_true, y_pred)
+    brier = brier_score_loss(y_true, y_prob)
+    logloss = log_loss(y_true, y_prob, labels=[0, 1])
+    tasa_acierto_favorito = favorito_acerto.mean()
+    tasa_sorpresas = 1 - tasa_acierto_favorito
+
+    print(f"    {nombre_grupo}: n={len(df_grupo)} | Accuracy={acc:.4f} | "
+          f"Brier={brier:.5f} | LogLoss={logloss:.4f} | "
+          f"Favorito acerto={tasa_acierto_favorito:.1%} | Sorpresas={tasa_sorpresas:.1%}")
+
+    return {"grupo": nombre_grupo, "n": len(df_grupo), "accuracy": acc,
+            "brier": brier, "log_loss": logloss,
+            "tasa_acierto_favorito": tasa_acierto_favorito,
+            "y_true": y_true, "y_prob": y_prob}
 
 
-def asignar_bucket(df, p20, p50, p80):
-    abs_diff = df["diff_era"].abs()
-    condiciones = [
-        abs_diff <= p20,
-        (abs_diff > p20) & (abs_diff <= p50),
-        (abs_diff > p50) & (abs_diff <= p80),
-        abs_diff > p80,
-    ]
-    etiquetas = ["neutral", "moderado", "fuerte", "extremo"]
-    df = df.copy()
-    df["bucket_era"] = np.select(condiciones, etiquetas, default="extremo")
-    return df
-
-
-def entrenar_modelos(df_train_bucket):
-    """Entrena Modelo A (solo ERA) y Modelo B (ERA+KBB) sobre datos de train
-    de un bucket especifico. Retorna ambos modelos ya ajustados."""
-    y = df_train_bucket["gano_local_int"].values
-
-    X_a = df_train_bucket[["diff_era"]].values
-    modelo_a = LogisticRegression()
-    modelo_a.fit(X_a, y)
-
-    X_b = df_train_bucket[["diff_era", "diff_kbb"]].values
-    modelo_b = LogisticRegression()
-    modelo_b.fit(X_b, y)
-
-    return modelo_a, modelo_b
-
-
-def evaluar_modelo(modelo, X, y_true):
-    probs = modelo.predict_proba(X)[:, 1]
-    probs_clip = np.clip(probs, 0.001, 0.999)
-    preds = (probs_clip >= 0.5).astype(int)
-    return {
-        "accuracy": accuracy_score(y_true, preds),
-        "brier": brier_score_loss(y_true, probs_clip),
-        "log_loss": log_loss(y_true, probs_clip, labels=[0, 1]),
-    }, probs_clip
-
-
-def bootstrap_diferencia_brier(y_true, probs_a, probs_b, n_iter=N_BOOTSTRAP):
+def bootstrap_diferencia_brier(y_true_a, y_prob_a, y_true_b, y_prob_b, n_iter=N_BOOTSTRAP):
     """
-    Bootstrap sobre las filas de evaluacion (sin refit de modelos) para estimar
-    un intervalo de confianza al 95% de la diferencia:
-      mejora = brier_modelo_A - brier_modelo_B
-    mejora > 0 significa que el modelo B (con KBB) tiene MENOR Brier (mejor).
+    Bootstrap independiente sobre cada grupo (local vs visitante) para estimar
+    IC 95% de la diferencia: brier_visitante - brier_local
+    (positivo = el modelo es MEJOR -menor Brier- prediciendo cuando el
+    favorito es local que cuando es visitante)
     """
-    n = len(y_true)
-    if n < 10:
+    n_a, n_b = len(y_true_a), len(y_true_b)
+    if n_a < 10 or n_b < 10:
         return None, None, None
 
     diffs = np.empty(n_iter)
-    y_arr = np.asarray(y_true)
     for i in range(n_iter):
-        idx = rng.integers(0, n, n)
-        brier_a = brier_score_loss(y_arr[idx], probs_a[idx])
-        brier_b = brier_score_loss(y_arr[idx], probs_b[idx])
-        diffs[i] = brier_a - brier_b
+        idx_a = rng.integers(0, n_a, n_a)
+        idx_b = rng.integers(0, n_b, n_b)
+        brier_a = brier_score_loss(y_true_a[idx_a], y_prob_a[idx_a])  # local
+        brier_b = brier_score_loss(y_true_b[idx_b], y_prob_b[idx_b])  # visitante
+        diffs[i] = brier_b - brier_a
 
     mejora_media = diffs.mean()
     ci_low, ci_high = np.percentile(diffs, [2.5, 97.5])
@@ -153,133 +123,106 @@ def bootstrap_diferencia_brier(y_true, probs_a, probs_b, n_iter=N_BOOTSTRAP):
 
 
 def main():
-    print("=== Hipotesis 1: K-BB% condicionado por magnitud de ERA ===\n")
+    print("=== Hipotesis 2: Sesgo local vs. visitante ===\n")
     df = cargar_datos()
     n_total = len(df)
     print(f"\nTotal de juegos con datos completos: {n_total}\n")
 
     corte_train = int(n_total * 0.6)
     corte_val = int(n_total * 0.8)
-    df_train = df.iloc[:corte_train].copy()
-    df_val = df.iloc[corte_train:corte_val].copy()
-    df_test = df.iloc[corte_val:].copy()
+    df_train = df.iloc[:corte_train]
+    df_val = df.iloc[corte_train:corte_val]
+    df_test = df.iloc[corte_val:]
     print(f"Train: {len(df_train)} | Val: {len(df_val)} | Test: {len(df_test)}\n")
 
-    p20, p50, p80 = definir_buckets_era(df_train)
-    print()
-
-    df_train = asignar_bucket(df_train, p20, p50, p80)
-    df_val = asignar_bucket(df_val, p20, p50, p80)
-    df_test = asignar_bucket(df_test, p20, p50, p80)
+    n_favorito_local_total = (df["favorito"] == "local").sum()
+    n_favorito_visitante_total = (df["favorito"] == "visitante").sum()
+    print(f"Distribucion global: favorito local en {n_favorito_local_total} juegos "
+          f"({n_favorito_local_total/n_total:.1%}), favorito visitante en "
+          f"{n_favorito_visitante_total} juegos ({n_favorito_visitante_total/n_total:.1%})\n")
 
     resumen_filas = []
-    conclusiones_por_bucket = {}
+    resultados_por_set = {}
 
-    for bucket in ["neutral", "moderado", "fuerte", "extremo"]:
-        print(f"\n{'='*60}")
-        print(f"BUCKET: {bucket.upper()}")
-        print(f"{'='*60}")
+    for nombre_set, subset in [("TRAIN", df_train), ("VALIDATION", df_val), ("TEST", df_test)]:
+        print(f"--- {nombre_set} ---")
+        grupo_local = subset[subset["favorito"] == "local"]
+        grupo_visitante = subset[subset["favorito"] == "visitante"]
 
-        train_bucket = df_train[df_train["bucket_era"] == bucket]
-        if len(train_bucket) < 30:
-            print(f"  Muestra de train insuficiente (n={len(train_bucket)}), se omite bucket.")
-            continue
+        r_local = evaluar_grupo(grupo_local, f"{nombre_set} - Favorito LOCAL")
+        r_visitante = evaluar_grupo(grupo_visitante, f"{nombre_set} - Favorito VISITANTE")
 
-        modelo_a, modelo_b = entrenar_modelos(train_bucket)
+        if r_local and r_visitante:
+            mejora, ci, sig = bootstrap_diferencia_brier(
+                r_local["y_true"], r_local["y_prob"],
+                r_visitante["y_true"], r_visitante["y_prob"]
+            )
+            print(f"    Bootstrap (Brier visitante - Brier local), n_iter={N_BOOTSTRAP}: "
+                  f"diferencia media={mejora:+.5f} | IC 95%=({ci[0]:+.5f}, {ci[1]:+.5f}) | "
+                  f"significativo={'SI' if sig else 'no'}")
+            print("    (positivo = el modelo predice MEJOR cuando el favorito es local)\n")
 
-        resultados_bucket = {}
-        for nombre_set, subset in [("TRAIN", train_bucket),
-                                     ("VALIDATION", df_val[df_val["bucket_era"] == bucket]),
-                                     ("TEST", df_test[df_test["bucket_era"] == bucket])]:
-            if len(subset) < 10:
-                print(f"  {nombre_set}: n={len(subset)} (insuficiente, se omite)")
-                continue
+            resultados_por_set[nombre_set] = {"mejora": mejora, "ci": ci, "significativo": sig}
 
-            y_true = subset["gano_local_int"].values
-            X_a = subset[["diff_era"]].values
-            X_b = subset[["diff_era", "diff_kbb"]].values
-
-            metricas_a, probs_a = evaluar_modelo(modelo_a, X_a, y_true)
-            metricas_b, probs_b = evaluar_modelo(modelo_b, X_b, y_true)
-
-            print(f"\n  --- {nombre_set} (n={len(subset)}) ---")
-            print(f"    Modelo A (solo ERA):    Accuracy={metricas_a['accuracy']:.4f} | "
-                  f"Brier={metricas_a['brier']:.5f} | LogLoss={metricas_a['log_loss']:.4f}")
-            print(f"    Modelo B (ERA + KBB):   Accuracy={metricas_b['accuracy']:.4f} | "
-                  f"Brier={metricas_b['brier']:.5f} | LogLoss={metricas_b['log_loss']:.4f}")
-
-            mejora, ci, sig = bootstrap_diferencia_brier(y_true, probs_a, probs_b)
-            if mejora is not None:
-                print(f"    Bootstrap (Brier A - Brier B), n_iter={N_BOOTSTRAP}: "
-                      f"mejora media={mejora:+.5f} | IC 95%=({ci[0]:+.5f}, {ci[1]:+.5f}) | "
-                      f"significativo={'SI' if sig else 'no'}")
-
-            resultados_bucket[nombre_set] = {
-                "n": len(subset), "brier_a": metricas_a["brier"], "brier_b": metricas_b["brier"],
-                "acc_a": metricas_a["accuracy"], "acc_b": metricas_b["accuracy"],
-                "mejora_brier": mejora, "ci_low": ci[0] if ci else None,
-                "ci_high": ci[1] if ci else None, "significativo": sig
-            }
-            resumen_filas.append({
-                "bucket": bucket, "set": nombre_set, "n": len(subset),
-                "brier_solo_era": metricas_a["brier"], "brier_era_kbb": metricas_b["brier"],
-                "acc_solo_era": metricas_a["accuracy"], "acc_era_kbb": metricas_b["accuracy"],
-                "mejora_brier_kbb": mejora,
-                "ci95_low": ci[0] if ci else None, "ci95_high": ci[1] if ci else None,
-                "significativo": sig
-            })
-
-        conclusiones_por_bucket[bucket] = resultados_bucket
+            for r, etiqueta in [(r_local, "local"), (r_visitante, "visitante")]:
+                resumen_filas.append({
+                    "set": nombre_set, "favorito": etiqueta, "n": r["n"],
+                    "accuracy": r["accuracy"], "brier": r["brier"], "log_loss": r["log_loss"],
+                    "tasa_acierto_favorito": r["tasa_acierto_favorito"],
+                    "diferencia_brier_visitante_menos_local": mejora,
+                    "ci95_low": ci[0], "ci95_high": ci[1], "significativo": sig
+                })
+        print()
 
     df_resumen = pd.DataFrame(resumen_filas)
-    print(f"\n\n{'='*60}")
     print("=== RESUMEN COMPLETO ===")
-    print(f"{'='*60}")
     print(df_resumen.to_string(index=False))
-    df_resumen.to_csv("/tmp/resultados_hipotesis1_kbb_era.csv", index=False)
-    print("\nResultados guardados en /tmp/resultados_hipotesis1_kbb_era.csv")
+    df_resumen.to_csv("/tmp/resultados_hipotesis2_local_visitante.csv", index=False)
+    print("\nResultados guardados en /tmp/resultados_hipotesis2_local_visitante.csv")
 
     # --- Conclusion automatica ---
-    print(f"\n\n{'='*60}")
+    print(f"\n{'='*60}")
     print("=== CONCLUSION AUTOMATICA ===")
     print(f"{'='*60}")
 
-    sig_val_test_por_bucket = {}
-    for bucket, resultados in conclusiones_por_bucket.items():
-        val_sig = resultados.get("VALIDATION", {}).get("significativo", False)
-        test_sig = resultados.get("TEST", {}).get("significativo", False)
-        val_mejora = resultados.get("VALIDATION", {}).get("mejora_brier", 0) or 0
-        test_mejora = resultados.get("TEST", {}).get("mejora_brier", 0) or 0
-        # Consistente = significativo en AMBOS val y test, Y la mejora favorece a KBB (positiva) en ambos
-        consistente = val_sig and test_sig and val_mejora > 0 and test_mejora > 0
-        sig_val_test_por_bucket[bucket] = consistente
-        print(f"  Bucket '{bucket}': significativo y consistente (KBB mejora) en VAL+TEST = {consistente}")
+    val_sig = resultados_por_set.get("VALIDATION", {}).get("significativo", False)
+    test_sig = resultados_por_set.get("TEST", {}).get("significativo", False)
+    val_mejora = resultados_por_set.get("VALIDATION", {}).get("mejora", 0) or 0
+    test_mejora = resultados_por_set.get("TEST", {}).get("mejora", 0) or 0
 
-    hay_evidencia_dinamica = any(sig_val_test_por_bucket.values())
-    # Patron esperado especifico: mayor beneficio en neutral, menor/nulo en extremo
-    neutral_gana = sig_val_test_por_bucket.get("neutral", False)
-    extremo_gana = sig_val_test_por_bucket.get("extremo", False)
+    consistente = val_sig and test_sig and np.sign(val_mejora) == np.sign(test_mejora)
 
-    print()
-    if neutral_gana and not extremo_gana:
-        print("RECOMENDACION: B. IMPLEMENTAR PESOS DINAMICOS")
-        print("Evidencia consistente (significativa en VALIDATION y TEST) de que K-BB%")
-        print("aporta valor real cuando el ERA es neutral, y ese aporte no se sostiene")
-        print("de la misma forma cuando el ERA es extremo. Esto respalda evolucionar")
-        print("de pesos fijos (0.70/0.30) hacia pesos que dependan de la magnitud del ERA.")
-    elif hay_evidencia_dinamica:
-        print("RECOMENDACION: revisar con mas detalle antes de decidir")
-        print("Hay evidencia significativa de aporte de K-BB% en algun bucket, pero no")
-        print("sigue el patron esperado (mayor en neutral, menor en extremo). Antes de")
-        print("implementar pesos dinamicos, vale la pena entender por que el patron no")
-        print("es el esperado - podria ser una senal real distinta a la hipotesis original,")
-        print("o podria ser ruido en un bucket especifico.")
+    print(f"Significativo en VALIDATION: {val_sig} (diferencia={val_mejora:+.5f})")
+    print(f"Significativo en TEST: {test_sig} (diferencia={test_mejora:+.5f})")
+    print(f"Consistente (mismo signo, ambos significativos): {consistente}\n")
+
+    if consistente and val_mejora > 0:
+        print("RECOMENDACION: SI existe sesgo real - el modelo predice sistematicamente")
+        print("mejor cuando el favorito es LOCAL que cuando es visitante. Vale la pena")
+        print("investigar si el ajuste de ventaja de localia (home field) en motor.py")
+        print("necesita recalibracion, o si hay una variable de contexto de local/visitante")
+        print("no capturada actualmente.")
+    elif consistente and val_mejora < 0:
+        print("RECOMENDACION: SI existe sesgo real - el modelo predice sistematicamente")
+        print("mejor cuando el favorito es VISITANTE que cuando es local. Patron")
+        print("inesperado (contrario a la intuicion de ventaja de localia) - revisar")
+        print("con atencion antes de actuar, podria indicar sobre-ajuste del home field")
+        print("actual en motor.py.")
     else:
-        print("RECOMENDACION: A. MANTENER PESOS FIJOS")
-        print("No existe evidencia estadisticamente significativa y consistente (en")
-        print("VALIDATION y TEST simultaneamente) de que el aporte de K-BB% cambie con")
-        print("la magnitud del ERA. Los pesos fijos actuales (0.70 ERA / 0.30 KBB) no")
-        print("deberian modificarse con la evidencia disponible.")
+        print("RECOMENDACION: NO hay evidencia consistente de sesgo local/visitante.")
+        print("El patron no es significativo en ambos sets simultaneamente, o cambia")
+        print("de signo entre VALIDATION y TEST - compatible con ruido estadistico.")
+        print("No se justifica modificar el ajuste de ventaja de localia actual.")
+
+    print(f"\n{'='*60}")
+    print("=== CONCLUSION GENERAL DE LAS 3 HIPOTESIS (si esta es la ultima) ===")
+    print(f"{'='*60}")
+    print("Si esta hipotesis tampoco muestra evidencia consistente, las 3 lineas de")
+    print("investigacion sobre recombinar variables existentes (K-BB%/ERA, ERA/xFIP,")
+    print("local/visitante) habran sido evaluadas con rigor y descartadas. La prioridad")
+    print("estrategica deberia pasar de optimizar la combinacion de variables actuales")
+    print("a incorporar nuevas fuentes de informacion (bullpen, park factor historico,")
+    print("clima real, matchups bateador-lanzador, etc.) segun el plan ya discutido.")
 
 
 if __name__ == "__main__":
