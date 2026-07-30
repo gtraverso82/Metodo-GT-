@@ -1,3 +1,23 @@
+name: Test API Splits
+
+on:
+  workflow_dispatch:
+
+jobs:
+  correr-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
       - name: Correr test
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
