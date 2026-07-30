@@ -1,7 +1,10 @@
 """
-Hipotesis 3: Consenso ERA vs xFIP (Prioridad Muy Alta)
+Hipotesis 3: Consenso ERA vs xFIP (Prioridad Muy Alta) - VERSION CORREGIDA
 Pregunta: Es el modelo mas preciso cuando ERA y xFIP favorecen al mismo equipo,
 comparado con cuando discrepan?
+
+FIX v2: Supabase limita select() a 1000 filas por default. Esta version pagina
+correctamente para traer TODOS los registros de backtesting_resultados (~3642).
 
 Requiere: tabla backtesting_resultados (columnas: game_id, prob_local_era,
 prob_local_xfip, gano_local, runs_reales_local, runs_reales_visitante)
@@ -11,7 +14,7 @@ experimento #4 ya validado, para evitar fuga de informacion. Las categorias
 de consenso se definen y los umbrales se fijan usando SOLO el set de train;
 val y test solo evaluan.
 
-Uso: python analizar_consenso_era_xfip.py
+Uso: python test_splits.py
 """
 
 import os
@@ -26,15 +29,43 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def cargar_datos():
-    """Carga backtesting_resultados completo, ordenado por fecha para split temporal."""
-    resultado = supabase.table("backtesting_resultados").select(
-        "game_id, fecha, prob_local_era, prob_local_xfip, gano_local, "
-        "runs_reales_local, runs_reales_visitante"
-    ).execute()
-    df = pd.DataFrame(resultado.data)
+    """
+    Carga backtesting_resultados COMPLETO via paginacion (Supabase limita
+    a 1000 filas por llamada por default). Sigue pidiendo paginas hasta
+    que una pagina regrese menos de PAGE_SIZE filas.
+    """
+    PAGE_SIZE = 1000
+    todas_las_filas = []
+    inicio = 0
+
+    while True:
+        fin = inicio + PAGE_SIZE - 1
+        resultado = supabase.table("backtesting_resultados").select(
+            "game_id, fecha, prob_local_era, prob_local_xfip, gano_local, "
+            "runs_reales_local, runs_reales_visitante"
+        ).range(inicio, fin).execute()
+
+        filas = resultado.data
+        todas_las_filas.extend(filas)
+        print(f"  Pagina traida: filas {inicio}-{fin} -> {len(filas)} registros")
+
+        if len(filas) < PAGE_SIZE:
+            break
+        inicio += PAGE_SIZE
+
+    df = pd.DataFrame(todas_las_filas)
+    print(f"Total de filas traidas de Supabase (antes de dropna): {len(df)}")
+
     df = df.dropna(subset=["prob_local_era", "prob_local_xfip", "gano_local"])
     df["fecha"] = pd.to_datetime(df["fecha"])
     df = df.sort_values("fecha").reset_index(drop=True)
+
+    # Chequeo de sanidad: avisar si el conteo no cuadra con lo esperado (~3642)
+    if len(df) < 3000:
+        print(f"  ADVERTENCIA: se esperaban ~3642 juegos, se obtuvieron {len(df)}. "
+              f"Revisar si hay filas con NULLs en columnas clave o si la paginacion "
+              f"no trajo todo.")
+
     return df
 
 
@@ -57,7 +88,6 @@ def clasificar_consenso(df, umbral_similar):
     df = df.copy()
     df["categoria_consenso"] = categoria
     df["diferencia_abs_era_xfip"] = diferencia_abs
-    # Probabilidad "de consenso" = promedio simple de ambas, para medir Brier/LogLoss del grupo
     df["prob_promedio"] = (df["prob_local_era"] + df["prob_local_xfip"]) / 2
     return df
 
@@ -82,12 +112,11 @@ def evaluar_grupo(df_grupo, nombre_grupo):
 
 
 def main():
+    print("=== Consenso ERA vs xFIP (v2 - paginacion corregida) ===")
     df = cargar_datos()
     n_total = len(df)
-    print(f"=== Consenso ERA vs xFIP ===")
-    print(f"Total de juegos con datos completos: {n_total}\n")
+    print(f"\nTotal de juegos con datos completos: {n_total}\n")
 
-    # Split temporal 60/20/20 (mismo criterio ya validado en experimento #4)
     corte_train = int(n_total * 0.6)
     corte_val = int(n_total * 0.8)
     df_train = df.iloc[:corte_train]
@@ -96,8 +125,6 @@ def main():
 
     print(f"Train: {len(df_train)} | Val: {len(df_val)} | Test: {len(df_test)}\n")
 
-    # Umbral de "similar" definido SOLO con train: usamos la mediana de
-    # diferencia_abs entre juegos con mismo favorito, como punto de corte
     favorito_era_train = df_train["prob_local_era"] >= 0.5
     favorito_xfip_train = df_train["prob_local_xfip"] >= 0.5
     mismo_train = df_train[favorito_era_train == favorito_xfip_train]
@@ -123,7 +150,6 @@ def main():
     print("=== RESUMEN ===")
     print(df_resultados.to_string(index=False))
 
-    # Guardar para revisión
     df_resultados.to_csv("/tmp/resultados_consenso_era_xfip.csv", index=False)
     print("\nResultados guardados en /tmp/resultados_consenso_era_xfip.csv")
 
