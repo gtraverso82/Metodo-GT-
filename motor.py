@@ -116,14 +116,28 @@ def stats_ofensiva_hasta_hoy(team, fecha_inicio, fecha_hoy, year):
            f"all=true&hfGT=R%7C&hfSea={year}%7C&player_type=batter&team={team}"
            f"&group_by=name&sort_col=pitches&player_event_sort=api_p_release_speed"
            f"&sort_order=desc&type=details&game_date_gt={fecha_inicio}&game_date_lt={fecha_hoy}")
-    r = requests.get(url)
-    df = pd.read_csv(StringIO(r.text))
-    dfv = df[df["launch_speed"].notna() & df["events"].notna()]
-    if len(dfv) == 0:
-        return 88.5, 0.075
-    ev = dfv["launch_speed"].mean()
-    barrels = (dfv["launch_speed_angle"] == 6).sum()
-    return round(ev, 1), round(barrels/len(dfv), 3)
+    # Protegido con try/except y reintento (mismo patron que obtener_clima):
+    # Baseball Savant a veces devuelve CSV malformado o pagina de error (rate-limit,
+    # timeout parcial). Sin esto, un solo equipo con respuesta corrupta tumbaba
+    # el partido completo sin guardar nada.
+    for intento in range(2):
+        try:
+            r = requests.get(url, timeout=20)
+            df = pd.read_csv(StringIO(r.text))
+            dfv = df[df["launch_speed"].notna() & df["events"].notna()]
+            if len(dfv) == 0:
+                return 88.5, 0.075
+            ev = dfv["launch_speed"].mean()
+            barrels = (dfv["launch_speed_angle"] == 6).sum()
+            return round(ev, 1), round(barrels/len(dfv), 3)
+        except (pd.errors.ParserError, pd.errors.EmptyDataError,
+                requests.exceptions.RequestException, KeyError) as e:
+            if intento == 0:
+                continue
+            print(f"    (stats ofensiva no disponibles tras 2 intentos para {team}: {e}) "
+                  f"- usando valores de liga por defecto")
+            return 88.5, 0.075
+    return 88.5, 0.075
 
 def bullpen_reciente(team_abbrev, fecha_hoy, year, dias_atras=5):
     team_id = TEAM_IDS.get(team_abbrev)
