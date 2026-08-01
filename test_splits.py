@@ -35,12 +35,12 @@ def buscar_pitcher_id(nombre):
 PARTIDOS = [
     {
         "local": "TB", "visitante": "CWS",
-        "pitcher_local_nombre": "Drew Rasmussen", "pitcher_visitante_nombre": "Shane Schultz",
+        "pitcher_local_nombre": "Drew Rasmussen", "pitcher_visitante_nombre": "Noah Schultz",
         "cuota_ml_local": -185, "cuota_ml_visitante": 140,
     },
     {
         "local": "CLE", "visitante": "AZ",
-        "pitcher_local_nombre": "Parker Messick", "pitcher_visitante_nombre": "Kyle Drake",
+        "pitcher_local_nombre": "Parker Messick", "pitcher_visitante_nombre": "Kohl Drake",
         "cuota_ml_local": -196, "cuota_ml_visitante": 145,
     },
     {
