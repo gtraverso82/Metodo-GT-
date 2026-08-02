@@ -24,6 +24,21 @@ TEAM_IDS = {
     "NYY":147, "MIL":158,
 }
 
+# NUEVO: traduccion de abreviaturas cuando difieren entre la API de MLB Stats
+# (usada para la cartelera, TEAM_IDS, etc.) y la API de ESPN (usada solo para
+# cuotas/handicap/total/predictor/lesiones). Sin esto, partidos como AZ@CLE y
+# CWS@TB nunca encontraban cuotas porque ESPN usa "ARI" y "CHW" mientras el
+# resto del sistema usa "AZ" y "CWS" - la comparacion de abreviaturas nunca
+# coincidia aunque la cuota SI existiera en ESPN.
+ESPN_ABBREV = {
+    "AZ": "ARI",
+    "CWS": "CHW",
+}
+
+def a_espn(abbrev):
+    """Convierte una abreviatura de equipo al formato que usa ESPN, si difiere."""
+    return ESPN_ABBREV.get(abbrev, abbrev)
+
 COORDENADAS_ESTADIO = {
     "LAA": (33.8003, -117.8827), "AZ": (33.4455, -112.0667), "BAL": (39.2838, -76.6217),
     "BOS": (42.3467, -71.0972), "CHC": (41.9484, -87.6553), "CIN": (39.0975, -84.5066),
@@ -236,6 +251,8 @@ def recomendacion_final(bandera, confianza):
     return "CRUZAR CON ANÁLISIS CUALITATIVO"
 
 def obtener_cuotas_espn(equipo_local, equipo_visitante, fecha):
+    equipo_local_espn = a_espn(equipo_local)
+    equipo_visitante_espn = a_espn(equipo_visitante)
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
     r = requests.get(url)
@@ -245,7 +262,7 @@ def obtener_cuotas_espn(equipo_local, equipo_visitante, fecha):
         equipos = competencia["competitors"]
         home = next(e for e in equipos if e["homeAway"] == "home")
         away = next(e for e in equipos if e["homeAway"] == "away")
-        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+        if home["team"]["abbreviation"] == equipo_local_espn and away["team"]["abbreviation"] == equipo_visitante_espn:
             odds_list = competencia.get("odds", [])
             if not odds_list:
                 return None, None
@@ -259,6 +276,8 @@ def obtener_cuotas_espn(equipo_local, equipo_visitante, fecha):
     return None, None
 
 def obtener_handicap_espn(equipo_local, equipo_visitante, fecha):
+    equipo_local_espn = a_espn(equipo_local)
+    equipo_visitante_espn = a_espn(equipo_visitante)
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
     r = requests.get(url)
@@ -268,7 +287,7 @@ def obtener_handicap_espn(equipo_local, equipo_visitante, fecha):
         equipos = competencia["competitors"]
         home = next(e for e in equipos if e["homeAway"] == "home")
         away = next(e for e in equipos if e["homeAway"] == "away")
-        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+        if home["team"]["abbreviation"] == equipo_local_espn and away["team"]["abbreviation"] == equipo_visitante_espn:
             odds_list = competencia.get("odds", [])
             if not odds_list:
                 return None
@@ -285,6 +304,8 @@ def obtener_handicap_espn(equipo_local, equipo_visitante, fecha):
     return None
 
 def obtener_total_espn(equipo_local, equipo_visitante, fecha):
+    equipo_local_espn = a_espn(equipo_local)
+    equipo_visitante_espn = a_espn(equipo_visitante)
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
     r = requests.get(url)
@@ -294,7 +315,7 @@ def obtener_total_espn(equipo_local, equipo_visitante, fecha):
         equipos = competencia["competitors"]
         home = next(e for e in equipos if e["homeAway"] == "home")
         away = next(e for e in equipos if e["homeAway"] == "away")
-        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+        if home["team"]["abbreviation"] == equipo_local_espn and away["team"]["abbreviation"] == equipo_visitante_espn:
             odds_list = competencia.get("odds", [])
             if not odds_list:
                 return None
@@ -539,6 +560,8 @@ def imprimir_matchup_lr(p, fecha_hoy):
         print(f"  Matchup {p['pitcher_local_nombre']} vs lineup {p['visitante']}: {fl:.3f}")
 
 def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
+    equipo_local_espn = a_espn(equipo_local)
+    equipo_visitante_espn = a_espn(equipo_visitante)
     fecha_espn = fecha.replace("-", "")
     url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={fecha_espn}"
     r = requests.get(url)
@@ -548,7 +571,7 @@ def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
         equipos = competencia["competitors"]
         home = next(e for e in equipos if e["homeAway"] == "home")
         away = next(e for e in equipos if e["homeAway"] == "away")
-        if home["team"]["abbreviation"] == equipo_local and away["team"]["abbreviation"] == equipo_visitante:
+        if home["team"]["abbreviation"] == equipo_local_espn and away["team"]["abbreviation"] == equipo_visitante_espn:
             pred = competencia.get("predictor")
             if pred:
                 return {"prob_local": pred.get("homeTeam", {}).get("gameProjection"),
@@ -557,7 +580,8 @@ def obtener_espn_predictor_partido(equipo_local, equipo_visitante, fecha):
     return None
 
 def obtener_lesiones_espn(equipo_abbrev):
-    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{equipo_abbrev.lower()}/injuries"
+    equipo_abbrev_espn = a_espn(equipo_abbrev)
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{equipo_abbrev_espn.lower()}/injuries"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
