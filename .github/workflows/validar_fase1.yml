@@ -1,0 +1,45 @@
+name: GT Next - Validar Fase 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "inspeccionar (ver columnas) o completo (correr validación)"
+        required: true
+        default: "inspeccionar"
+        type: choice
+        options:
+          - inspeccionar
+          - completo
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+
+      - name: Correr inspección de esquema
+        if: ${{ github.event.inputs.modo == 'inspeccionar' }}
+        working-directory: gt_next
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python validar_fase1_vs_real.py inspeccionar
+
+      - name: Correr validación completa
+        if: ${{ github.event.inputs.modo == 'completo' }}
+        working-directory: gt_next
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python validar_fase1_vs_real.py
