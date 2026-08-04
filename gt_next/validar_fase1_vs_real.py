@@ -7,12 +7,23 @@ QUÉ VALIDA ESTE SCRIPT (y qué NO):
   SÍ valida: si la distribución agregada de carreras que produce el
   simulador de Fase 1 (media, varianza, forma) se parece a la
   distribución real de carreras observada en los 3,642 juegos de
-  backtesting_resultados (2022-2023).
+  backtesting_resultados (2022-2023). Esto confirma si la mecánica
+  del motor (estados base-out, avance de corredores, Monte Carlo)
+  está bien construida.
 
   NO valida (todavía): precisión predictiva partido-por-partido
   (Brier Score, Log Loss) contra GT Classic. Fase 1 usa probabilidades
-  de liga fijas — no diferencia entre equipos. Esa comparación tiene
-  sentido a partir de Fase 2 (lineups).
+  de liga fijas — no diferencia entre equipos, así que predice lo
+  mismo para cualquier partido. Esa comparación solo tiene sentido
+  a partir de Fase 2 (lineups), cuando el motor pueda diferenciar
+  ofensivas. Hacerla ahora daría una "derrota" de Fase 1 que no
+  significa nada real, solo que le falta la información que Fase 2
+  va a agregar.
+
+PASO 0 (ejecutar primero, una sola vez): inspeccionar el esquema real
+de backtesting_resultados, porque los nombres de columna abajo son
+un supuesto razonable, no un hecho confirmado. Ajustar CONFIG según
+lo que devuelva inspeccionar_esquema().
 """
 
 import os
@@ -20,14 +31,15 @@ from collections import Counter
 
 from supabase import create_client
 
+# Importa el motor de Fase 1 (debe estar en el mismo repo, gt_next/)
 from simulador_fase1 import monte_carlo, resumen_distribucion
 
 # ---------------------------------------------------------------------
-# CONFIG
+# CONFIG — ajustar tras correr inspeccionar_esquema()
 # ---------------------------------------------------------------------
 TABLA = "backtesting_resultados"
-COL_CARRERAS_LOCAL = "runs_reales_local"
-COL_CARRERAS_VISITANTE = "runs_reales_visitante"
+COL_CARRERAS_LOCAL = "carreras_local"        # <-- verificar nombre real
+COL_CARRERAS_VISITANTE = "carreras_visitante"  # <-- verificar nombre real
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
@@ -37,7 +49,41 @@ def get_client():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+def extraer_equipos_unicos():
+    """
+    Extrae los códigos de equipo reales desde game_id (formato
+    'VISITANTE@LOCAL_YYYY-MM-DD'), en vez de adivinar abreviaturas.
+    Evita repetir el bug de mismatch AZ/CWS que ya costó tiempo en
+    la integración con ESPN.
+    """
+    sb = get_client()
+    equipos = set()
+    page_size = 1000
+    start = 0
+    while True:
+        resp = sb.table(TABLA).select("game_id").range(start, start + page_size - 1).execute()
+        filas = resp.data
+        if not filas:
+            break
+        for fila in filas:
+            gid = fila.get("game_id", "")
+            partes = gid.rsplit("_", 1)  # separa la fecha del final
+            if len(partes) == 2 and "@" in partes[0]:
+                visitante, local = partes[0].split("@")
+                equipos.add(visitante)
+                equipos.add(local)
+        if len(filas) < page_size:
+            break
+        start += page_size
+
+    print(f"Equipos únicos encontrados ({len(equipos)}):")
+    for eq in sorted(equipos):
+        print(f"  - {eq}")
+    return sorted(equipos)
+
+
 def inspeccionar_esquema():
+    """Corre esto primero para confirmar nombres de columna reales."""
     sb = get_client()
     muestra = sb.table(TABLA).select("*").limit(3).execute()
     if not muestra.data:
@@ -52,6 +98,10 @@ def inspeccionar_esquema():
 
 
 def cargar_carreras_reales() -> list[int]:
+    """
+    Trae carreras totales (local + visitante) por juego, paginando
+    completo con .range() para no quedar truncado en 1,000 filas.
+    """
     sb = get_client()
     carreras_totales = []
     page_size = 1000
@@ -82,6 +132,10 @@ def cargar_carreras_reales() -> list[int]:
 def bootstrap_diferencia_medias(
     reales: list[int], simulados: list[int], n_iter: int = 2000
 ) -> dict:
+    """
+    Bootstrap para intervalo de confianza al 95% de la diferencia
+    entre la media real y la media simulada (carreras totales por juego).
+    """
     import random
 
     diferencias = []
@@ -119,10 +173,12 @@ def comparar_distribuciones(reales: list[int], simulados: list[int]) -> None:
     print(f"IC 95%: [{ci['ic_95_inferior']}, {ci['ic_95_superior']}]")
     if ci["ic_95_inferior"] <= 0 <= ci["ic_95_superior"]:
         print("-> El IC 95% incluye 0: no hay evidencia de diferencia significativa.")
-        print("   Fase 1 pasa la validación distribucional.")
+        print("   La mecánica del motor produce un ambiente de anotación consistente")
+        print("   con la realidad. Fase 1 pasa la validación distribucional.")
     else:
         print("-> El IC 95% NO incluye 0: hay diferencia significativa.")
-        print("   Revisar PA_PROBS o la lógica de avance de corredores.")
+        print("   Antes de avanzar a Fase 2, revisar probabilidades de PA_PROBS")
+        print("   o la lógica de avance de corredores en simulador_fase1.py.")
 
 
 if __name__ == "__main__":
@@ -132,10 +188,14 @@ if __name__ == "__main__":
         inspeccionar_esquema()
         sys.exit(0)
 
+    if len(sys.argv) > 1 and sys.argv[1] == "equipos":
+        extraer_equipos_unicos()
+        sys.exit(0)
+
     print("Cargando carreras reales de backtesting_resultados...")
     reales = cargar_carreras_reales()
 
-    print("Corriendo Monte Carlo del motor de Fase 1...")
+    print("Corriendo Monte Carlo del motor de Fase 1 (carreras totales por juego = local + visitante)...")
     n = len(reales) if reales else 10_000
     local_sim = monte_carlo(n_juegos=n, semilla=42)
     visitante_sim = monte_carlo(n_juegos=n, semilla=43)
