@@ -92,6 +92,26 @@ def guardar_contexto_partido(game_id, fecha, park_factor, ctx, matchup, winpct_r
     print(f"  [CONTEXTO] {game_id}: guardado (bullpen_local={bullpen_era_local}, "
           f"bullpen_visitante={bullpen_era_visitante}, winpct_ratio={winpct_ratio})")
 
+def guardar_resultado_moneyline(game_id, fecha, equipo_local, equipo_visitante,
+                                  prob_local, bandera):
+    """
+    NUEVO. Registra la prediccion de moneyline (favorito + probabilidad + bandera)
+    con resultado pendiente (gano_local=NULL). El script resolver_resultados.py
+    la actualiza al dia siguiente con el resultado real via MLB Stats API.
+    Esto elimina la necesidad de reconstruir el balance de precision a mano
+    revisando el chat cada vez.
+    """
+    favorito = equipo_local if prob_local >= 0.5 else equipo_visitante
+    prob_favorito = prob_local if prob_local >= 0.5 else 1 - prob_local
+    supabase.table("resultado_moneyline").insert({
+        "game_id": game_id, "fecha": fecha,
+        "equipo_local": equipo_local, "equipo_visitante": equipo_visitante,
+        "equipo_favorito": favorito, "prob_favorito": prob_favorito,
+        "bandera": bandera,
+    }).execute()
+    print(f"  [MONEYLINE] {game_id}: favorito {favorito} ({prob_favorito:.1%}) "
+          f"registrado, pendiente de resolucion")
+
 def correr_jornada():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     print(f"=== Corrida diaria: {fecha_hoy} ===")
@@ -136,6 +156,12 @@ def correr_jornada():
                 "prob": prob_favorito,
                 "bandera": resultado['bandera']
             })
+
+            try:
+                guardar_resultado_moneyline(game_id, fecha_hoy, p['local'], p['visitante'],
+                                              resultado['prob_local'], resultado['bandera'])
+            except Exception as e:
+                print(f"  (error guardando resultado_moneyline: {e})")
 
             matchup = {}
             try:
