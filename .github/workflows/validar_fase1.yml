@@ -11,6 +11,7 @@ on:
         options:
           - inspeccionar
           - completo
+          - equipos
 
 jobs:
   validar:
@@ -43,3 +44,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python validar_fase1_vs_real.py
+
+      - name: Extraer equipos únicos
+        if: ${{ github.event.inputs.modo == 'equipos' }}
+        working-directory: gt_next
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python validar_fase1_vs_real.py equipos
