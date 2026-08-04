@@ -12,11 +12,44 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def ya_capturado_hoy(game_id):
-    """Verifica si este partido ya tiene una fila en diagnostico_total (evita duplicados
-    cuando el cron corre varias veces al dia para cubrir juegos de horarios distintos)."""
-    resultado = supabase.table("diagnostico_total").select("id").eq("game_id", game_id).execute()
-    return len(resultado.data) > 0
+def ya_capturado_hoy(game_id, pitcher_id_local, pitcher_id_visitante):
+    """
+    Verifica si este partido ya tiene una fila en diagnostico_total. Ademas
+    compara el abridor probable guardado contra el actual: si cambio (ej.
+    escrachado por trade deadline, lesion de ultima hora), borra las filas
+    viejas de las 4 tablas relacionadas y fuerza un reprocesamiento completo
+    con los datos correctos, en vez de saltar el partido silenciosamente
+    (esto es lo que fallo con el caso Peralta->Senga->Phillips en NYM).
+    """
+    resultado = supabase.table("diagnostico_total").select(
+        "id, pitcher_id_local, pitcher_id_visitante"
+    ).eq("game_id", game_id).execute()
+
+    if not resultado.data:
+        return False
+
+    fila = resultado.data[0]
+    stored_local = fila.get("pitcher_id_local")
+    stored_visitante = fila.get("pitcher_id_visitante")
+
+    # Filas antiguas (antes de este fix) no tienen estos campos guardados.
+    # No hay con que comparar, asumimos que no cambio para no reprocesar
+    # en masa el historico existente.
+    if stored_local is None or stored_visitante is None:
+        return True
+
+    if stored_local != pitcher_id_local or stored_visitante != pitcher_id_visitante:
+        print(f"  [ALERTA] Cambio de abridor detectado en {game_id}: "
+              f"local {stored_local}->{pitcher_id_local}, "
+              f"visitante {stored_visitante}->{pitcher_id_visitante}. Reprocesando...")
+        for tabla in ["diagnostico_total", "odds_snapshots", "contexto_partido", "resultado_moneyline"]:
+            try:
+                supabase.table(tabla).delete().eq("game_id", game_id).execute()
+            except Exception as e:
+                print(f"    (no se pudo limpiar {tabla}: {e})")
+        return False
+
+    return True
 
 def guardar_snapshot(game_id, bookmaker_key, market_key, outcome_name, price,
                       point=None, modelo_prob=None, modelo_bandera=None,
@@ -30,12 +63,14 @@ def guardar_snapshot(game_id, bookmaker_key, market_key, outcome_name, price,
     print(f"Snapshot: {game_id} - {market_key} - {outcome_name}")
 
 def guardar_diagnostico_total(game_id, fecha, total_esperado, linea_mercado,
-                                park_factor, era_local, era_visitante):
+                                park_factor, era_local, era_visitante,
+                                pitcher_id_local, pitcher_id_visitante):
     diferencia = total_esperado - linea_mercado
     supabase.table("diagnostico_total").insert({
         "game_id": game_id, "fecha": fecha, "total_esperado_modelo": total_esperado,
         "linea_mercado": linea_mercado, "diferencia": diferencia,
-        "park_factor": park_factor, "era_local": era_local, "era_visitante": era_visitante
+        "park_factor": park_factor, "era_local": era_local, "era_visitante": era_visitante,
+        "pitcher_id_local": pitcher_id_local, "pitcher_id_visitante": pitcher_id_visitante
     }).execute()
     print(f"Diagnostico: {game_id} | Linea mercado: {linea_mercado} | Proyectado modelo: {total_esperado:.2f} | Diferencia: {diferencia:+.2f}")
 
@@ -129,7 +164,7 @@ def correr_jornada():
 
         game_id = f"{p['visitante']}@{p['local']}_{fecha_hoy.replace('-','')}"
 
-        if ya_capturado_hoy(game_id):
+        if ya_capturado_hoy(game_id, p['pitcher_local_id'], p['pitcher_visitante_id']):
             print(f"Ya capturado: {p['visitante']} @ {p['local']} (corrida anterior de hoy)")
             continue
 
@@ -228,7 +263,8 @@ def correr_jornada():
                                                     total_info['over_odds'], total_info['under_odds'], total_info['linea'])
                 guardar_diagnostico_total(game_id, fecha_hoy, total_resultado['total_esperado'],
                                             total_info['linea'], park_factor,
-                                            resultado.get('era_local', 0), resultado.get('era_visitante', 0))
+                                            resultado.get('era_local', 0), resultado.get('era_visitante', 0),
+                                            p['pitcher_local_id'], p['pitcher_visitante_id'])
                 linea_total_calc = total_info['linea']
                 proyeccion_total_calc = total_resultado['total_esperado']
                 diferencia_total_calc = proyeccion_total_calc - linea_total_calc
@@ -289,4 +325,3 @@ def correr_jornada():
 
 if __name__ == "__main__":
     correr_jornada()
-
