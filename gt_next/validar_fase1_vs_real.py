@@ -30,8 +30,8 @@ from simulador_fase1 import monte_carlo, resumen_distribucion
 # CONFIG — ajustar tras correr inspeccionar_esquema()
 # ---------------------------------------------------------------------
 TABLA = "backtesting_resultados"
-COL_CARRERAS_LOCAL = "carreras_local"
-COL_CARRERAS_VISITANTE = "carreras_visitante"
+COL_CARRERAS_LOCAL = "runs_reales_local"
+COL_CARRERAS_VISITANTE = "runs_reales_visitante"
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
