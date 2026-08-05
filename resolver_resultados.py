@@ -41,9 +41,16 @@ def obtener_pendientes():
 
 def obtener_resultados_reales_fecha(fecha):
     """Consulta MLB Stats API y retorna un dict {(home_abbr, away_abbr): (score_home, score_away)}
-    para todos los juegos finalizados de esa fecha."""
+    para todos los juegos finalizados de esa fecha.
+
+    hydrate=linescore,team (no solo linescore): sin el hydrate de 'team',
+    MLB Stats API a veces devuelve el objeto team resumido (solo id/name/link,
+    sin 'abbreviation'), lo que rompia esta funcion con un KeyError y tumbaba
+    la corrida completa. Ademas, un try/except por partido evita que un caso
+    puntual con estructura rara bloquee la resolucion de todos los demas.
+    """
     url = (f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={fecha}"
-           f"&hydrate=linescore&gameType=R")
+           f"&hydrate=linescore,team&gameType=R")
     r = requests.get(url, timeout=15)
     data = r.json()
     resultados = {}
@@ -52,10 +59,16 @@ def obtener_resultados_reales_fecha(fecha):
             estado = juego.get("status", {}).get("abstractGameState")
             if estado != "Final":
                 continue
-            home = juego["teams"]["home"]
-            away = juego["teams"]["away"]
-            home_abbr = home["team"]["abbreviation"]
-            away_abbr = away["team"]["abbreviation"]
+            try:
+                home = juego["teams"]["home"]
+                away = juego["teams"]["away"]
+                home_abbr = home["team"]["abbreviation"]
+                away_abbr = away["team"]["abbreviation"]
+            except KeyError as e:
+                game_pk = juego.get("gamePk", "desconocido")
+                print(f"    (aviso: juego {game_pk} sin '{e.args[0]}' en la respuesta de "
+                      f"MLB Stats API, se omite este partido para {fecha})")
+                continue
             score_home = home.get("score")
             score_away = away.get("score")
             if score_home is not None and score_away is not None:
@@ -118,4 +131,3 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
