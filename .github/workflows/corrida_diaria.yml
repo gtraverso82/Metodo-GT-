@@ -1,20 +1,6 @@
 name: Corrida Diaria Metodo GT
 
 on:
-  schedule:
-    # Lunes y Martes: 5:37pm RD
-    - cron: '37 21 * * 1,2'
-    # Miercoles y Jueves: 11:37am y 5:37pm RD
-    - cron: '37 15 * * 3,4'
-    - cron: '37 21 * * 3,4'
-    # Viernes: 5:07pm RD
-    - cron: '7 21 * * 5'
-    # Sabado: 11:37am y 5:07pm RD
-    - cron: '37 15 * * 6'
-    - cron: '7 21 * * 6'
-    # Domingo: 11:37am y 5:37pm RD
-    - cron: '37 15 * * 0'
-    - cron: '37 21 * * 0'
   workflow_dispatch:
 
 
